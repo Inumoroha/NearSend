@@ -1,0 +1,22 @@
+# Reference repository kept outside this app's source.
+localsend/
+
+# Local installers and downloaded assets.
+rustup-init.exe
+9e470bd0-f426-494c-a636-7bc9abca42ec.png
+
+# Flutter/Dart build and tool output.
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# IDE/user-local files.
+**/.idea/
+**/*.iml
+**/.tool_home/
+**/.tool_home_local/
+
+# OS files.
+Thumbs.db
+.DS_Store
