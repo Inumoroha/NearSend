@@ -14,12 +14,14 @@ import 'package:window_manager/window_manager.dart';
 
 import 'models/discovered_device.dart';
 import 'models/nearsend_message.dart';
+import 'models/receive_history_entry.dart';
 import 'services/lan_discovery_service.dart';
 import 'services/localsend_file_transfer.dart';
 import 'services/localsend_identity.dart';
 import 'services/manual_device_connector.dart';
 import 'services/native_window_service.dart';
 import 'services/nearsend_message_client.dart';
+import 'services/receive_history_store.dart';
 import 'services/windows_clipboard_files.dart';
 
 Future<void> main() async {
@@ -44,6 +46,7 @@ const _minimizeToTrayPreferenceKey = 'minimize_to_tray';
 const _overwriteSameNameFilesPreferenceKey = 'overwrite_same_name_files';
 const _themeModePreferenceKey = 'theme_mode';
 const _themeColorPreferenceKey = 'theme_color';
+const _clipboardAutoSendPreferenceKey = 'clipboard_auto_send_fingerprints';
 
 enum AppThemeMode { light, dark }
 
@@ -208,6 +211,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   );
   final Map<String, DiscoveredDevice> _devices = {};
   final Map<String, Conversation> _deviceConversations = {};
+  final Map<String, TransferHandle> _transferHandles = {};
+  final _historyStore = ReceiveHistoryStore();
+  List<ReceiveHistoryEntry> _receiveHistory = [];
+  final Set<String> _clipboardAutoSendFingerprints = {};
+  Timer? _clipboardPollTimer;
+  int _lastClipboardSequence = 0;
   StreamSubscription<DiscoveredDevice>? _discoverySubscription;
   StreamSubscription<NearSendMessage>? _messageSubscription;
   bool _isScanning = false;
@@ -262,6 +271,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     trayManager.addListener(this);
     _applyPalette(_buildPalette(_themeMode, _themeColor));
     unawaited(_restoreWindowSettings());
+    unawaited(_loadReceiveHistory());
     if (widget.enableDiscovery) {
       _discoverySubscription = _discoveryService.devices.listen(_upsertDevice);
       _messageSubscription = _discoveryService.messages.listen(
@@ -277,6 +287,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void dispose() {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    _clipboardPollTimer?.cancel();
     unawaited(trayManager.destroy());
     unawaited(windowManager.setPreventClose(false));
     unawaited(_discoverySubscription?.cancel());
@@ -329,6 +340,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final themeColor = savedThemeColor == null
         ? _themeColorOptions.first
         : Color(savedThemeColor);
+    final autoSendFingerprints =
+        preferences.getStringList(_clipboardAutoSendPreferenceKey) ??
+        const <String>[];
     _applyPalette(_buildPalette(themeMode, themeColor));
 
     if (enabled) {
@@ -343,8 +357,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _overwriteSameNameFiles = overwriteSameNameFiles;
       _themeMode = themeMode;
       _themeColor = themeColor;
+      _clipboardAutoSendFingerprints
+        ..clear()
+        ..addAll(autoSendFingerprints);
       _restoringSettings = false;
     });
+    _syncClipboardPolling();
   }
 
   Future<void> _setThemeMode(AppThemeMode mode) async {
@@ -580,6 +598,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final device = _devices[fingerprint];
     final attachment = await _incomingAttachment(message.attachment);
     if (!mounted) return;
+    if (attachment != null) {
+      unawaited(_recordReceiveHistory(message.senderAlias, attachment));
+    }
     final chatMessage = ChatMessage(
       message.text,
       sender: message.senderAlias.initials,
@@ -658,6 +679,193 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     }
     return candidate;
   }
+
+  String get _activeAutoSaveDirectory => _autoSaveDirectory.trim().isEmpty
+      ? _defaultAutoSaveDirectory
+      : _autoSaveDirectory.trim();
+
+  Future<void> _loadReceiveHistory() async {
+    final entries = await _historyStore.load();
+    if (!mounted) return;
+    setState(() {
+      _receiveHistory = entries;
+    });
+  }
+
+  Future<void> _recordReceiveHistory(
+    String senderAlias,
+    MessageAttachment attachment,
+  ) async {
+    var autoSaved = false;
+    try {
+      autoSaved =
+          _autoSaveEnabled &&
+          p.isWithin(_activeAutoSaveDirectory, attachment.path);
+    } catch (_) {
+      autoSaved = false;
+    }
+
+    final entry = ReceiveHistoryEntry(
+      id: 'history-${DateTime.now().microsecondsSinceEpoch}',
+      fileName: attachment.name,
+      size: attachment.size,
+      senderAlias: senderAlias.isEmpty ? '未知设备' : senderAlias,
+      path: attachment.path,
+      autoSaved: autoSaved,
+      receivedAt: DateTime.now(),
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _receiveHistory = [entry, ..._receiveHistory];
+    });
+    unawaited(_historyStore.persist(_receiveHistory));
+  }
+
+  Future<void> _openHistoryFile(ReceiveHistoryEntry entry) async {
+    if (!File(entry.path).existsSync()) {
+      _showToast('文件不存在，可能已被移动或删除');
+      return;
+    }
+    try {
+      // explorer often exits non-zero even on success; ignore the exit code.
+      await Process.run('explorer', [entry.path]);
+    } catch (_) {
+      if (mounted) _showToast('无法打开文件');
+    }
+  }
+
+  Future<void> _openHistoryFolder(ReceiveHistoryEntry entry) async {
+    if (!File(entry.path).existsSync()) {
+      _showToast('文件不存在，可能已被移动或删除');
+      return;
+    }
+    try {
+      await Process.run('explorer', ['/select,${entry.path}']);
+    } catch (_) {
+      if (mounted) _showToast('无法打开所在文件夹');
+    }
+  }
+
+  Future<void> _deleteHistoryEntry(ReceiveHistoryEntry entry) async {
+    final result = await _confirmHistoryRemoval(
+      title: '删除记录',
+      message: '从接收历史中移除「${entry.fileName}」。',
+    );
+    if (result == null || !mounted) return;
+
+    setState(() {
+      _receiveHistory = _receiveHistory
+          .where((item) => item.id != entry.id)
+          .toList();
+    });
+    unawaited(_historyStore.persist(_receiveHistory));
+
+    if (result.alsoDeleteFile) {
+      await _deleteFileQuietly(entry.path);
+    }
+  }
+
+  Future<void> _clearReceiveHistory() async {
+    if (_receiveHistory.isEmpty) return;
+    final result = await _confirmHistoryRemoval(
+      title: '清空历史',
+      message: '清空全部 ${_receiveHistory.length} 条接收记录。',
+    );
+    if (result == null || !mounted) return;
+
+    final removed = _receiveHistory;
+    setState(() {
+      _receiveHistory = [];
+    });
+    unawaited(_historyStore.persist(_receiveHistory));
+
+    if (result.alsoDeleteFile) {
+      for (final entry in removed) {
+        await _deleteFileQuietly(entry.path);
+      }
+    }
+  }
+
+  Future<void> _deleteFileQuietly(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      if (mounted) _showToast('部分文件删除失败');
+    }
+  }
+
+  Future<_HistoryRemoval?> _confirmHistoryRemoval({
+    required String title,
+    required String message,
+  }) {
+    var alsoDeleteFile = false;
+    return showDialog<_HistoryRemoval>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return TeaDialog(
+              title: Text(title),
+              icon: Icons.delete_outline_rounded,
+              width: 380,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    message,
+                    style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+                  ),
+                  const SizedBox(height: 12),
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () =>
+                        setLocalState(() => alsoDeleteFile = !alsoDeleteFile),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        children: [
+                          Checkbox(
+                            value: alsoDeleteFile,
+                            onChanged: (value) => setLocalState(
+                              () => alsoDeleteFile = value ?? false,
+                            ),
+                            visualDensity: VisualDensity.compact,
+                            activeColor: _accent,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            '同时删除磁盘上的文件',
+                            style: TextStyle(color: _text, fontSize: 13),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TeaDialogButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  label: '取消',
+                ),
+                TeaDialogButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_HistoryRemoval(alsoDeleteFile: alsoDeleteFile)),
+                  label: '删除',
+                  filled: true,
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
 
   void _sendMessage() {
     final text = _controller.text.trim();
@@ -987,47 +1195,60 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final target = _selectedDevice;
     if (target == null) return;
 
-    try {
-      final attachment = message.attachment;
-      if (attachment == null) {
+    final attachment = message.attachment;
+    if (attachment == null) {
+      try {
         await _messageClient.sendText(target: target, text: message.text);
-      } else {
-        await _localSendTransfer.sendFile(
-          target: target,
-          path: attachment.path,
-        );
+        _updateMessageStatus(message.id, MessageSendStatus.sent);
+      } catch (_) {
+        _updateMessageStatus(message.id, MessageSendStatus.failed);
+        _appendSystemMessage('文字发送失败：对方需要支持 NearSend 消息接口。');
       }
-      _updateMessageStatus(message.id, MessageSendStatus.sent);
-    } catch (_) {
-      _updateMessageStatus(message.id, MessageSendStatus.failed);
-      _appendSystemMessage(
-        message.attachment == null
-            ? '文字发送失败：对方需要支持 NearSend 消息接口。'
-            : '文件发送失败：对方可能拒绝接收、需要 PIN，或网络不可达。',
-      );
+      return;
     }
+
+    await _sendAttachment(target: target, message: message);
   }
 
   Future<void> _sendNetworkAttachments(List<ChatMessage> messages) async {
     final target = _selectedDevice;
     if (target == null || messages.isEmpty) return;
 
+    for (final message in messages) {
+      await _sendAttachment(target: target, message: message);
+    }
+  }
+
+  /// Sends a single attachment with byte-level progress and a cancel handle, so
+  /// each message bubble reflects and can abort its own transfer independently.
+  Future<void> _sendAttachment({
+    required DiscoveredDevice target,
+    required ChatMessage message,
+  }) async {
+    final attachment = message.attachment;
+    if (attachment == null) return;
+
+    final handle = TransferHandle();
+    _transferHandles[message.id] = handle;
+    _updateMessageProgress(message.id, 0);
     try {
-      await _localSendTransfer.sendFiles(
+      await _localSendTransfer.sendFile(
         target: target,
-        paths: messages
-            .map((message) => message.attachment?.path)
-            .whereType<String>()
-            .toList(),
+        path: attachment.path,
+        handle: handle,
+        onProgress: (sent, total) => _updateMessageProgress(
+          message.id,
+          total == 0 ? 0 : sent / total,
+        ),
       );
-      for (final message in messages) {
-        _updateMessageStatus(message.id, MessageSendStatus.sent);
-      }
+      _updateMessageStatus(message.id, MessageSendStatus.sent);
+    } on TransferCancelledException {
+      _updateMessageStatus(message.id, MessageSendStatus.cancelled);
     } catch (_) {
-      for (final message in messages) {
-        _updateMessageStatus(message.id, MessageSendStatus.failed);
-      }
+      _updateMessageStatus(message.id, MessageSendStatus.failed);
       _appendSystemMessage('文件发送失败：对方可能拒绝接收、需要 PIN，或网络不可达。');
+    } finally {
+      _transferHandles.remove(message.id);
     }
   }
 
@@ -1038,13 +1259,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (target == null || message == null || attachment == null) return;
 
     _updateMessageStatus(messageId, MessageSendStatus.sending);
-    try {
-      await _localSendTransfer.sendFile(target: target, path: attachment.path);
-      _updateMessageStatus(messageId, MessageSendStatus.sent);
-    } catch (_) {
-      _updateMessageStatus(messageId, MessageSendStatus.failed);
-      _appendSystemMessage('文件重试发送失败：对方可能拒绝接收、需要 PIN，或网络不可达。');
-    }
+    await _sendAttachment(target: target, message: message);
   }
 
   Future<void> _copyAttachmentPath(MessageAttachment attachment) async {
@@ -1118,6 +1333,29 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         );
       }
     });
+  }
+
+  void _updateMessageProgress(String messageId, double progress) {
+    if (!mounted) return;
+    setState(() {
+      for (final entry in _deviceConversations.entries.toList()) {
+        _deviceConversations[entry.key] = entry.value.updateMessageProgress(
+          messageId,
+          progress,
+        );
+      }
+
+      for (var index = 0; index < _conversations.length; index++) {
+        _conversations[index] = _conversations[index].updateMessageProgress(
+          messageId,
+          progress,
+        );
+      }
+    });
+  }
+
+  void _cancelTransfer(String messageId) {
+    _transferHandles[messageId]?.cancel();
   }
 
   void _enterMessageSelectionMode() {
@@ -1334,6 +1572,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
+  void _showHistorySection() {
+    setState(() {
+      _activeSection = _MainSection.history;
+      _messageSelectionMode = false;
+      _showDeviceDetails = false;
+      _selectedMessageIds.clear();
+    });
+  }
+
   Future<void> _chooseAutoSaveDirectory() async {
     final directory = await getDirectoryPath(
       initialDirectory: Directory(_autoSaveDirectory).existsSync()
@@ -1388,6 +1635,135 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
           .copyWith(subtitle: subtitle, time: '刚刚', unread: 0);
     });
     _scrollToBottom();
+  }
+
+  /// Appends an outgoing message to a specific device conversation (by
+  /// fingerprint), creating the conversation if needed. Used by auto-send,
+  /// which targets devices that may not be the currently open chat.
+  void _appendOutgoingMessageTo(
+    String fingerprint,
+    ChatMessage message, {
+    required String subtitle,
+  }) {
+    setState(() {
+      final existing = _deviceConversations[fingerprint];
+      final device = _devices[fingerprint];
+      final base =
+          existing ??
+          (device != null ? _deviceConversation(device) : null);
+      if (base == null) return;
+      _deviceConversations[fingerprint] = base.appendMessage(
+        message,
+        subtitle: subtitle,
+        unread: _selectedConversationFingerprint == fingerprint ? 0 : 1,
+      );
+    });
+    _scrollToBottom();
+  }
+
+  void _setClipboardAutoSendEnabled(String fingerprint, bool enabled) {
+    setState(() {
+      if (enabled) {
+        _clipboardAutoSendFingerprints.add(fingerprint);
+      } else {
+        _clipboardAutoSendFingerprints.remove(fingerprint);
+      }
+    });
+    unawaited(_persistClipboardAutoSend());
+    _syncClipboardPolling();
+  }
+
+  Future<void> _persistClipboardAutoSend() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _clipboardAutoSendPreferenceKey,
+      _clipboardAutoSendFingerprints.toList(),
+    );
+  }
+
+  /// Starts polling when at least one device opted in, stops otherwise.
+  void _syncClipboardPolling() {
+    if (!Platform.isWindows) return;
+    final shouldPoll = _clipboardAutoSendFingerprints.isNotEmpty;
+    if (shouldPoll && _clipboardPollTimer == null) {
+      // Ignore whatever is already on the clipboard when polling begins.
+      _lastClipboardSequence = _clipboardFiles.clipboardSequence();
+      _clipboardPollTimer = Timer.periodic(
+        const Duration(milliseconds: 800),
+        (_) => unawaited(_pollClipboard()),
+      );
+    } else if (!shouldPoll) {
+      _clipboardPollTimer?.cancel();
+      _clipboardPollTimer = null;
+    }
+  }
+
+  Future<void> _pollClipboard() async {
+    if (!Platform.isWindows || !mounted) return;
+    final sequence = _clipboardFiles.clipboardSequence();
+    if (sequence == 0 || sequence == _lastClipboardSequence) return;
+    _lastClipboardSequence = sequence;
+    if (!_clipboardFiles.hasClipboardBitmap()) return;
+
+    final targets = _clipboardAutoSendFingerprints
+        .where(_devices.containsKey)
+        .toList();
+    if (targets.isEmpty) return;
+
+    final path = await _clipboardFiles.readBitmapImagePath();
+    if (path == null || !mounted) return;
+
+    final names = <String>[];
+    for (final fingerprint in targets) {
+      final device = _devices[fingerprint];
+      if (device == null) continue;
+      names.add(device.alias);
+      unawaited(_autoSendClipboardImage(fingerprint, device, path));
+    }
+    if (names.isNotEmpty) {
+      _showToast('已自动发送截图到 ${names.join('、')}');
+    }
+  }
+
+  Future<void> _autoSendClipboardImage(
+    String fingerprint,
+    DiscoveredDevice device,
+    String path,
+  ) async {
+    final attachment = MessageAttachment.fromPath(path);
+    final message = ChatMessage(
+      '',
+      isMe: true,
+      attachment: attachment,
+      status: MessageSendStatus.sending,
+    );
+    _appendOutgoingMessageTo(
+      fingerprint,
+      message,
+      subtitle: _messageSubtitle(message),
+    );
+
+    final handle = TransferHandle();
+    _transferHandles[message.id] = handle;
+    _updateMessageProgress(message.id, 0);
+    try {
+      await _localSendTransfer.sendFile(
+        target: device,
+        path: path,
+        handle: handle,
+        onProgress: (sent, total) => _updateMessageProgress(
+          message.id,
+          total == 0 ? 0 : sent / total,
+        ),
+      );
+      _updateMessageStatus(message.id, MessageSendStatus.sent);
+    } on TransferCancelledException {
+      _updateMessageStatus(message.id, MessageSendStatus.cancelled);
+    } catch (_) {
+      _updateMessageStatus(message.id, MessageSendStatus.failed);
+    } finally {
+      _transferHandles.remove(message.id);
+    }
   }
 
   void _appendSystemMessage(String text) {
@@ -1470,6 +1846,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 onChats: _showChatsSection,
                 onTheme: _showThemeSection,
                 onSettings: _showSettingsSection,
+                onHistory: _showHistorySection,
               ),
             if (_activeSection == _MainSection.theme)
               Expanded(
@@ -1478,6 +1855,16 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                   themeColor: _themeColor,
                   onThemeModeChanged: _setThemeMode,
                   onThemeColorChanged: _setThemeColor,
+                ),
+              )
+            else if (_activeSection == _MainSection.history)
+              Expanded(
+                child: HistoryPage(
+                  entries: _receiveHistory,
+                  onOpenFile: _openHistoryFile,
+                  onOpenFolder: _openHistoryFolder,
+                  onDelete: _deleteHistoryEntry,
+                  onClear: _clearReceiveHistory,
                 ),
               )
             else if (_activeSection == _MainSection.settings)
@@ -1547,10 +1934,19 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onDeleteSelectedMessages: _deleteSelectedMessages,
                     onToggleSelectAllMessages: _toggleSelectAllMessages,
                     onRetrySendAttachment: _retrySendAttachment,
+                    onCancelTransfer: _cancelTransfer,
                     onCopyAttachment: _copyAttachmentPath,
                     previewImage: _previewImage,
                     onPreviewImage: _openImagePreview,
                     onClosePreview: _closeImagePreview,
+                    clipboardAutoSendEnabled: _clipboardAutoSendFingerprints
+                        .contains(_selectedConversationFingerprint),
+                    onClipboardAutoSendChanged: (value) {
+                      final fingerprint = _selectedConversationFingerprint;
+                      if (fingerprint != null) {
+                        _setClipboardAutoSendEnabled(fingerprint, value);
+                      }
+                    },
                   ),
                 ),
             ],
@@ -1567,12 +1963,14 @@ class _Sidebar extends StatelessWidget {
     required this.onChats,
     required this.onTheme,
     required this.onSettings,
+    required this.onHistory,
   });
 
   final _MainSection activeSection;
   final VoidCallback onChats;
   final VoidCallback onTheme;
   final VoidCallback onSettings;
+  final VoidCallback onHistory;
 
   @override
   Widget build(BuildContext context) {
@@ -1602,7 +2000,12 @@ class _Sidebar extends StatelessWidget {
           ),
           const _NavIcon(icon: Icons.devices_rounded, tooltip: '设备'),
           const _NavIcon(icon: Icons.star_rounded, tooltip: '收藏'),
-          const _NavIcon(icon: Icons.folder_rounded, tooltip: '文件'),
+          _NavIcon(
+            icon: Icons.history_rounded,
+            active: activeSection == _MainSection.history,
+            tooltip: '接收历史',
+            onPressed: onHistory,
+          ),
           const Spacer(),
           _NavIcon(
             icon: Icons.palette_rounded,
@@ -1622,9 +2025,16 @@ class _Sidebar extends StatelessWidget {
   }
 }
 
-enum _MainSection { chats, theme, settings }
+enum _MainSection { chats, theme, settings, history }
 
 enum _ConversationMenuAction { rename, clear, delete }
+
+/// Result of the delete/clear confirmation dialog.
+class _HistoryRemoval {
+  const _HistoryRemoval({required this.alsoDeleteFile});
+
+  final bool alsoDeleteFile;
+}
 
 InputDecoration teaInputDecoration({String? labelText, String? hintText}) {
   return InputDecoration(
@@ -2449,6 +2859,279 @@ class _SettingsSwitchCard extends StatelessWidget {
   }
 }
 
+class HistoryPage extends StatelessWidget {
+  const HistoryPage({
+    super.key,
+    required this.entries,
+    required this.onOpenFile,
+    required this.onOpenFolder,
+    required this.onDelete,
+    required this.onClear,
+  });
+
+  final List<ReceiveHistoryEntry> entries;
+  final ValueChanged<ReceiveHistoryEntry> onOpenFile;
+  final ValueChanged<ReceiveHistoryEntry> onOpenFolder;
+  final ValueChanged<ReceiveHistoryEntry> onDelete;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _chatBg,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 74,
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            decoration: BoxDecoration(
+              color: _surface,
+              border: Border(bottom: BorderSide(color: _line)),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  '接收历史',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  entries.isEmpty ? '' : '${entries.length} 条',
+                  style: TextStyle(color: _muted, fontSize: 13),
+                ),
+                const Spacer(),
+                if (entries.isNotEmpty)
+                  TextButton.icon(
+                    onPressed: onClear,
+                    icon: const Icon(Icons.delete_sweep_rounded, size: 18),
+                    label: const Text('清空'),
+                    style: TextButton.styleFrom(foregroundColor: _muted),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: entries.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.inbox_rounded,
+                          size: 46,
+                          color: _muted.withValues(alpha: 0.5),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          '暂无接收记录',
+                          style: TextStyle(color: _muted, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
+                    itemCount: entries.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final entry = entries[index];
+                      return _HistoryTile(
+                        entry: entry,
+                        onOpenFile: () => onOpenFile(entry),
+                        onOpenFolder: () => onOpenFolder(entry),
+                        onDelete: () => onDelete(entry),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistoryTile extends StatelessWidget {
+  const _HistoryTile({
+    required this.entry,
+    required this.onOpenFile,
+    required this.onOpenFolder,
+    required this.onDelete,
+  });
+
+  final ReceiveHistoryEntry entry;
+  final VoidCallback onOpenFile;
+  final VoidCallback onOpenFolder;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final kind = FileKind.fromExtension(p.extension(entry.fileName));
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: _accentSoft,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(kind.icon, color: _accent, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.fileName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _text,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          '${_formatBytes(entry.size)} · ${entry.senderAlias} · ${_formatTime(entry.receivedAt)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: _muted, fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _HistoryBadge(autoSaved: entry.autoSaved),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            _HistoryAction(
+              icon: Icons.open_in_new_rounded,
+              tooltip: '打开文件',
+              onPressed: onOpenFile,
+            ),
+            _HistoryAction(
+              icon: Icons.folder_open_rounded,
+              tooltip: '打开所在文件夹',
+              onPressed: onOpenFolder,
+            ),
+            _HistoryAction(
+              icon: Icons.delete_outline_rounded,
+              tooltip: '删除记录',
+              color: const Color(0xFFC85D4D),
+              onPressed: onDelete,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatBytes(int size) {
+    if (size <= 0) return '未知大小';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    var value = size.toDouble();
+    var index = 0;
+    while (value >= 1024 && index < units.length - 1) {
+      value /= 1024;
+      index++;
+    }
+    final digits = index == 0 || value >= 10 ? 0 : 1;
+    return '${value.toStringAsFixed(digits)} ${units[index]}';
+  }
+
+  String _formatTime(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inMinutes < 1) return '刚刚';
+    if (diff.inMinutes < 60) return '${diff.inMinutes} 分钟前';
+    if (diff.inHours < 24 && now.day == time.day) {
+      final hh = time.hour.toString().padLeft(2, '0');
+      final mm = time.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+    return '${time.month}月${time.day}日';
+  }
+}
+
+class _HistoryBadge extends StatelessWidget {
+  const _HistoryBadge({required this.autoSaved});
+
+  final bool autoSaved;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = autoSaved ? '已保存' : '临时';
+    final color = autoSaved ? _accent : _muted;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryAction extends StatelessWidget {
+  const _HistoryAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.color,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        color: color ?? _muted,
+        style: IconButton.styleFrom(
+          fixedSize: const Size(34, 34),
+          minimumSize: const Size(34, 34),
+          padding: EdgeInsets.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+}
+
 class ConversationPanel extends StatelessWidget {
   const ConversationPanel({
     super.key,
@@ -2817,10 +3500,13 @@ class ChatPanel extends StatelessWidget {
     required this.onDeleteSelectedMessages,
     required this.onToggleSelectAllMessages,
     required this.onRetrySendAttachment,
+    required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.previewImage,
     required this.onPreviewImage,
     required this.onClosePreview,
+    required this.clipboardAutoSendEnabled,
+    required this.onClipboardAutoSendChanged,
   });
 
   final Conversation conversation;
@@ -2843,10 +3529,13 @@ class ChatPanel extends StatelessWidget {
   final VoidCallback onDeleteSelectedMessages;
   final ValueChanged<Set<String>> onToggleSelectAllMessages;
   final ValueChanged<String> onRetrySendAttachment;
+  final ValueChanged<String> onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
   final MessageAttachment? previewImage;
   final ValueChanged<MessageAttachment> onPreviewImage;
   final VoidCallback onClosePreview;
+  final bool clipboardAutoSendEnabled;
+  final ValueChanged<bool> onClipboardAutoSendChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -2872,7 +3561,13 @@ class ChatPanel extends StatelessWidget {
                 ),
               ),
               if (showDetails)
-                Expanded(child: DeviceDetailsPage(conversation: conversation))
+                Expanded(
+                  child: DeviceDetailsPage(
+                    conversation: conversation,
+                    clipboardAutoSendEnabled: clipboardAutoSendEnabled,
+                    onClipboardAutoSendChanged: onClipboardAutoSendChanged,
+                  ),
+                )
               else ...[
                 Expanded(
                   child: ListView(
@@ -2887,6 +3582,8 @@ class ChatPanel extends StatelessWidget {
                           onToggleSelected: () =>
                               onToggleMessageSelection(message.id),
                           onRetrySend: () => onRetrySendAttachment(message.id),
+                          onCancelTransfer: () =>
+                              onCancelTransfer(message.id),
                           onCopyAttachment: onCopyAttachment,
                           onPreviewImage: onPreviewImage,
                         ),
@@ -3143,9 +3840,16 @@ class _HeaderButton extends StatelessWidget {
 }
 
 class DeviceDetailsPage extends StatelessWidget {
-  const DeviceDetailsPage({super.key, required this.conversation});
+  const DeviceDetailsPage({
+    super.key,
+    required this.conversation,
+    required this.clipboardAutoSendEnabled,
+    required this.onClipboardAutoSendChanged,
+  });
 
   final Conversation conversation;
+  final bool clipboardAutoSendEnabled;
+  final ValueChanged<bool> onClipboardAutoSendChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -3187,6 +3891,11 @@ class DeviceDetailsPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 28),
+                _DeviceAutoSendCard(
+                  enabled: clipboardAutoSendEnabled,
+                  onChanged: onClipboardAutoSendChanged,
+                ),
+                const SizedBox(height: 14),
                 _DeviceDetailSection(
                   title: '设备标识',
                   rows: [
@@ -3224,6 +3933,71 @@ class DeviceDetailsPage extends StatelessWidget {
     String two(int number) => number.toString().padLeft(2, '0');
     return '${value.year}-${two(value.month)}-${two(value.day)} '
         '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+}
+
+class _DeviceAutoSendCard extends StatelessWidget {
+  const _DeviceAutoSendCard({required this.enabled, required this.onChanged});
+
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: _accentSoft,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.content_paste_go_rounded,
+                color: _accent,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '自动发送截图',
+                    style: TextStyle(
+                      color: _text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '截屏并复制到剪贴板后，自动把图片发送到此设备',
+                    style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Switch(
+              value: enabled,
+              activeThumbColor: _accent,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -3343,6 +4117,7 @@ class MessageBubble extends StatelessWidget {
     required this.selected,
     required this.onToggleSelected,
     required this.onRetrySend,
+    required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.onPreviewImage,
   });
@@ -3352,6 +4127,7 @@ class MessageBubble extends StatelessWidget {
   final bool selected;
   final VoidCallback onToggleSelected;
   final VoidCallback onRetrySend;
+  final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
   final ValueChanged<MessageAttachment> onPreviewImage;
 
@@ -3423,6 +4199,7 @@ class MessageBubble extends StatelessWidget {
       _BubbleSurface(
         message: message,
         onRetrySend: onRetrySend,
+        onCancelTransfer: onCancelTransfer,
         onCopyAttachment: onCopyAttachment,
         onPreviewImage: onPreviewImage,
       ),
@@ -3439,6 +4216,7 @@ class MessageBubble extends StatelessWidget {
       _BubbleSurface(
         message: message,
         onRetrySend: onRetrySend,
+        onCancelTransfer: onCancelTransfer,
         onCopyAttachment: onCopyAttachment,
         onPreviewImage: onPreviewImage,
       ),
@@ -3474,6 +4252,63 @@ class RetrySendButton extends StatelessWidget {
   }
 }
 
+class CancelTransferButton extends StatelessWidget {
+  const CancelTransferButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '取消发送',
+      child: IconButton(
+        onPressed: onPressed,
+        icon: const Icon(Icons.close_rounded, size: 17),
+        color: const Color(0xFFC85D4D),
+        style: IconButton.styleFrom(
+          fixedSize: const Size(30, 30),
+          minimumSize: const Size(30, 30),
+          padding: EdgeInsets.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          backgroundColor: const Color(0xEEFFFFFF),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+}
+
+class TransferProgressBar extends StatelessWidget {
+  const TransferProgressBar({super.key, required this.progress});
+
+  /// 0.0–1.0
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = (progress.clamp(0.0, 1.0) * 100).round();
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: 5,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress.clamp(0.0, 1.0),
+                color: _accent,
+                backgroundColor: const Color(0xFFEFECE3),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text('$percent%', style: TextStyle(color: _muted, fontSize: 12)),
+      ],
+    );
+  }
+}
+
 class CopyAttachmentButton extends StatelessWidget {
   const CopyAttachmentButton({super.key, required this.onPressed});
 
@@ -3504,12 +4339,14 @@ class _BubbleSurface extends StatelessWidget {
   const _BubbleSurface({
     required this.message,
     required this.onRetrySend,
+    required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.onPreviewImage,
   });
 
   final ChatMessage message;
   final VoidCallback onRetrySend;
+  final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
   final ValueChanged<MessageAttachment> onPreviewImage;
 
@@ -3525,6 +4362,7 @@ class _BubbleSurface extends StatelessWidget {
           child: MessageContent(
             message: message,
             onRetrySend: onRetrySend,
+            onCancelTransfer: onCancelTransfer,
             onCopyAttachment: onCopyAttachment,
             onPreviewImage: onPreviewImage,
           ),
@@ -3552,6 +4390,7 @@ class _BubbleSurface extends StatelessWidget {
         child: MessageContent(
           message: message,
           onRetrySend: onRetrySend,
+          onCancelTransfer: onCancelTransfer,
           onCopyAttachment: onCopyAttachment,
           onPreviewImage: onPreviewImage,
         ),
@@ -3578,6 +4417,11 @@ class MessageStatusIcon extends StatelessWidget {
         Icons.error_outline_rounded,
         const Color(0xFFC85D4D),
         '发送失败',
+      ),
+      MessageSendStatus.cancelled => (
+        Icons.block_rounded,
+        const Color(0xFFB7B1A5),
+        '已取消',
       ),
       MessageSendStatus.none => (Icons.done_rounded, Colors.transparent, ''),
     };
@@ -3611,6 +4455,11 @@ class MessageStatusPill extends StatelessWidget {
         const Color(0xFFC85D4D),
         '发送失败',
       ),
+      MessageSendStatus.cancelled => (
+        Icons.block_rounded,
+        const Color(0xFFB7B1A5),
+        '已取消',
+      ),
       MessageSendStatus.none => (Icons.done_rounded, Colors.transparent, ''),
     };
 
@@ -3642,12 +4491,14 @@ class MessageContent extends StatelessWidget {
     super.key,
     required this.message,
     required this.onRetrySend,
+    required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.onPreviewImage,
   });
 
   final ChatMessage message;
   final VoidCallback onRetrySend;
+  final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
   final ValueChanged<MessageAttachment> onPreviewImage;
 
@@ -3699,6 +4550,7 @@ class MessageContent extends StatelessWidget {
           message: message,
           attachment: attachment,
           onRetrySend: onRetrySend,
+          onCancelTransfer: onCancelTransfer,
           onCopyAttachment: () => onCopyAttachment(attachment),
           child: content,
         ),
@@ -3713,6 +4565,7 @@ class AttachmentMessageFrame extends StatelessWidget {
     required this.message,
     required this.attachment,
     required this.onRetrySend,
+    required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.child,
   });
@@ -3720,15 +4573,34 @@ class AttachmentMessageFrame extends StatelessWidget {
   final ChatMessage message;
   final MessageAttachment attachment;
   final VoidCallback onRetrySend;
+  final VoidCallback onCancelTransfer;
   final VoidCallback onCopyAttachment;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final copyButton = CopyAttachmentButton(onPressed: onCopyAttachment);
-    final statusButton = message.status == MessageSendStatus.failed
-        ? RetrySendButton(onPressed: onRetrySend)
-        : MessageStatusPill(status: message.status);
+    final isSending = message.status == MessageSendStatus.sending;
+    final statusButton = switch (message.status) {
+      MessageSendStatus.failed => RetrySendButton(onPressed: onRetrySend),
+      MessageSendStatus.sending => CancelTransferButton(
+        onPressed: onCancelTransfer,
+      ),
+      _ => MessageStatusPill(status: message.status),
+    };
+
+    // While sending, show a thin progress bar + percentage under the tile.
+    final body = (message.isMe && isSending)
+        ? Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              child,
+              const SizedBox(height: 6),
+              TransferProgressBar(progress: message.progress ?? 0),
+            ],
+          )
+        : child;
 
     if (message.isMe) {
       return Row(
@@ -3743,7 +4615,7 @@ class AttachmentMessageFrame extends StatelessWidget {
             attachment: attachment,
           ),
           const SizedBox(width: 6),
-          child,
+          Flexible(child: body),
         ],
       );
     }
@@ -4317,6 +5189,28 @@ class Conversation {
     );
   }
 
+  Conversation updateMessageProgress(String messageId, double progress) {
+    var changed = false;
+    final nextMessages = messages.map((message) {
+      if (message.id != messageId) return message;
+      changed = true;
+      return message.copyWith(progress: progress);
+    }).toList();
+    if (!changed) return this;
+
+    return Conversation(
+      title: title,
+      subtitle: subtitle,
+      status: status,
+      time: time,
+      initials: initials,
+      unread: unread,
+      messages: nextMessages,
+      files: files,
+      device: device,
+    );
+  }
+
   String _subtitleFor(ChatMessage message) {
     final attachment = message.attachment;
     if (attachment != null) {
@@ -4349,6 +5243,7 @@ class ChatMessage {
     this.system = false,
     this.attachment,
     this.status = MessageSendStatus.none,
+    this.progress,
   }) : id =
            id ??
            'msg-${DateTime.now().microsecondsSinceEpoch}-${_nextSequence++}';
@@ -4363,7 +5258,10 @@ class ChatMessage {
   final MessageAttachment? attachment;
   final MessageSendStatus status;
 
-  ChatMessage copyWith({MessageSendStatus? status}) {
+  /// Upload progress in 0.0–1.0 while [status] is sending; null when unknown.
+  final double? progress;
+
+  ChatMessage copyWith({MessageSendStatus? status, double? progress}) {
     return ChatMessage(
       text,
       id: id,
@@ -4372,11 +5270,12 @@ class ChatMessage {
       system: system,
       attachment: attachment,
       status: status ?? this.status,
+      progress: progress ?? this.progress,
     );
   }
 }
 
-enum MessageSendStatus { none, sending, sent, failed }
+enum MessageSendStatus { none, sending, sent, failed, cancelled }
 
 class MessageAttachment {
   MessageAttachment({
@@ -4506,6 +5405,21 @@ enum FileKind {
       '.pptx' => FileKind.doc,
       _ => FileKind.file,
     };
+  }
+
+  IconData get icon {
+    switch (this) {
+      case FileKind.image:
+        return Icons.image_rounded;
+      case FileKind.pdf:
+        return Icons.picture_as_pdf_rounded;
+      case FileKind.archive:
+        return Icons.folder_zip_rounded;
+      case FileKind.doc:
+        return Icons.description_rounded;
+      case FileKind.file:
+        return Icons.insert_drive_file_rounded;
+    }
   }
 }
 

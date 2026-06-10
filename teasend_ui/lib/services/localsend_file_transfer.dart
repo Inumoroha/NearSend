@@ -9,6 +9,31 @@ import '../models/discovered_device.dart';
 import '../models/nearsend_message.dart';
 import 'localsend_identity.dart';
 
+/// Thrown when an in-flight upload is aborted via [TransferHandle.cancel].
+class TransferCancelledException implements Exception {
+  const TransferCancelledException();
+
+  @override
+  String toString() => 'TransferCancelledException';
+}
+
+/// Per-transfer cancel handle. The UI holds one per outgoing message and calls
+/// [cancel] to abort the upload; the bound [HttpClient] is force-closed so the
+/// connection drops immediately rather than after the current chunk.
+class TransferHandle {
+  bool _cancelled = false;
+  HttpClient? _client;
+
+  bool get isCancelled => _cancelled;
+
+  void _bind(HttpClient client) => _client = client;
+
+  void cancel() {
+    _cancelled = true;
+    _client?.close(force: true);
+  }
+}
+
 class LocalSendFileTransferService {
   LocalSendFileTransferService({required this.identity});
 
@@ -115,13 +140,22 @@ class LocalSendFileTransferService {
   Future<void> sendFile({
     required DiscoveredDevice target,
     required String path,
+    void Function(int sent, int total)? onProgress,
+    TransferHandle? handle,
   }) async {
-    await sendFiles(target: target, paths: [path]);
+    await sendFiles(
+      target: target,
+      paths: [path],
+      onProgress: onProgress,
+      handle: handle,
+    );
   }
 
   Future<void> sendFiles({
     required DiscoveredDevice target,
     required List<String> paths,
+    void Function(int sent, int total)? onProgress,
+    TransferHandle? handle,
   }) async {
     if (paths.isEmpty) return;
     final files = <_OutgoingFile>[];
@@ -138,9 +172,11 @@ class LocalSendFileTransferService {
       );
     }
 
+    final totalBytes = files.fold<int>(0, (sum, file) => sum + file.size);
     final prepareResponse = await _prepareUpload(target: target, files: files);
     final remoteSessionId = prepareResponse.sessionId;
     var uploadedAny = false;
+    var sentBefore = 0;
 
     for (final file in files) {
       final token = prepareResponse.files[file.id];
@@ -152,7 +188,11 @@ class LocalSendFileTransferService {
         fileId: file.id,
         token: token,
         sessionId: remoteSessionId,
+        handle: handle,
+        onProgress: (fileSent) =>
+            onProgress?.call(sentBefore + fileSent, totalBytes),
       );
+      sentBefore += file.size;
     }
     if (!uploadedAny) {
       throw const HttpException('LocalSend receiver did not accept any files');
@@ -226,10 +266,16 @@ class LocalSendFileTransferService {
     required String fileId,
     required String token,
     required String? sessionId,
+    void Function(int sent)? onProgress,
+    TransferHandle? handle,
   }) async {
     final file = File(path);
     final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    handle?._bind(client);
     try {
+      if (handle?.isCancelled ?? false) {
+        throw const TransferCancelledException();
+      }
       final query = {
         // ignore: use_null_aware_elements
         if (sessionId != null) 'sessionId': sessionId,
@@ -249,7 +295,23 @@ class LocalSendFileTransferService {
       );
       request.headers.contentType = ContentType.parse(_mimeFor(path));
       request.headers.contentLength = await file.length();
-      await request.addStream(file.openRead());
+
+      var sent = 0;
+      final source = file.openRead().transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (chunk, sink) {
+            if (handle?.isCancelled ?? false) {
+              sink.addError(const TransferCancelledException());
+              return;
+            }
+            sent += chunk.length;
+            onProgress?.call(sent);
+            sink.add(chunk);
+          },
+        ),
+      );
+      await request.addStream(source);
+
       final response = await request.close().timeout(
         const Duration(minutes: 5),
       );
@@ -257,6 +319,13 @@ class LocalSendFileTransferService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('upload failed: ${response.statusCode}');
       }
+    } catch (_) {
+      // Forcing the client closed on cancel surfaces as a generic socket error;
+      // normalize anything that happens after a cancel into TransferCancelled.
+      if (handle?.isCancelled ?? false) {
+        throw const TransferCancelledException();
+      }
+      rethrow;
     } finally {
       client.close(force: true);
     }

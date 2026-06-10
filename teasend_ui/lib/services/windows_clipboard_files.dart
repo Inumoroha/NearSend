@@ -6,6 +6,30 @@ import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 
 class WindowsClipboardFiles {
+  /// A monotonically increasing counter Windows bumps on every clipboard
+  /// change. Lets us cheaply detect "the clipboard changed" while polling,
+  /// without opening the clipboard or materializing its contents each tick.
+  int clipboardSequence() {
+    if (!Platform.isWindows) return 0;
+    return GetClipboardSequenceNumber();
+  }
+
+  /// Whether the clipboard currently holds a bitmap (e.g. a screenshot).
+  /// `IsClipboardFormatAvailable` does not require `OpenClipboard`, so this is
+  /// safe to call frequently.
+  bool hasClipboardBitmap() {
+    if (!Platform.isWindows) return false;
+    return IsClipboardFormatAvailable(CF_DIBV5) != FALSE ||
+        IsClipboardFormatAvailable(CF_DIB) != FALSE;
+  }
+
+  /// Reads only the clipboard bitmap (ignores copied image files), writing it
+  /// to a temp `.bmp`. Returns null when no bitmap is present.
+  Future<String?> readBitmapImagePath() async {
+    if (!Platform.isWindows) return null;
+    return _readBitmapPath();
+  }
+
   Future<List<String>> readImagePaths() async {
     if (!Platform.isWindows) return const [];
     final paths = readFilePaths();
