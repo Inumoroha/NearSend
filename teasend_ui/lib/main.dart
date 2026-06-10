@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:toastification/toastification.dart';
@@ -15,6 +16,7 @@ import 'package:window_manager/window_manager.dart';
 import 'models/discovered_device.dart';
 import 'models/nearsend_message.dart';
 import 'models/receive_history_entry.dart';
+import 'services/android_platform.dart';
 import 'services/lan_discovery_service.dart';
 import 'services/localsend_file_transfer.dart';
 import 'services/localsend_identity.dart';
@@ -199,6 +201,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     with WindowListener, TrayListener {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final List<MessageAttachment> _pendingAttachments = [];
   final _clipboardFiles = WindowsClipboardFiles();
   final _nativeWindow = const NativeWindowService();
@@ -238,6 +241,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   late String _autoSaveDirectory;
   _MainSection _activeSection = _MainSection.chats;
   int _selected = 0;
+  // On narrow (phone) layouts, whether the full-screen chat page is open over
+  // the conversation list. Ignored on wide layouts which show both side by side.
+  bool _mobileChatOpen = false;
   final Set<String> _selectedMessageIds = {};
 
   final List<Conversation> _conversations = [
@@ -266,6 +272,22 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     return p.join(Directory.current.path, 'NearSend Downloads');
   }
 
+  /// On Android the primary save path is MediaStore (public Downloads). This
+  /// only sets a writable app-specific fallback used if MediaStore ever fails,
+  /// since Directory.current is not writable on Android.
+  Future<void> _initAndroidFallbackDirectory() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      if (!mounted) return;
+      setState(() {
+        _autoSaveDirectory = p.join(dir.path, 'NearSend');
+      });
+    } catch (_) {
+      // Keep whatever default was set; MediaStore is the real target anyway.
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -275,9 +297,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       trayManager.addListener(this);
     }
     _applyPalette(_buildPalette(_themeMode, _themeColor));
+    unawaited(_initAndroidFallbackDirectory());
     unawaited(_restoreWindowSettings());
     unawaited(_loadReceiveHistory());
     if (widget.enableDiscovery) {
+      // Android drops inbound multicast unless a MulticastLock is held.
+      unawaited(AndroidPlatform.acquireMulticastLock());
       _discoverySubscription = _discoveryService.devices.listen(_upsertDevice);
       _messageSubscription = _discoveryService.messages.listen(
         (message) => unawaited(_handleIncomingMessage(message)),
@@ -297,6 +322,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       unawaited(windowManager.setPreventClose(false));
     }
     _clipboardPollTimer?.cancel();
+    unawaited(AndroidPlatform.releaseMulticastLock());
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
@@ -662,18 +688,45 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<String> _autoSaveIncomingFile(NearSendAttachment attachment) async {
+    final safeName = attachment.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+
+    // On Android, write into the public Downloads folder through MediaStore so
+    // the file is visible to file managers and survives without runtime perms.
+    if (Platform.isAndroid) {
+      final saved = await AndroidPlatform.saveToDownloads(
+        sourcePath: attachment.path,
+        fileName: safeName,
+        mimeType: _mimeForName(safeName),
+      );
+      if (saved != null) return saved;
+      // Fall through to direct file IO if MediaStore failed.
+    }
+
     final directoryPath = _autoSaveDirectory.trim().isEmpty
         ? _defaultAutoSaveDirectory
         : _autoSaveDirectory.trim();
     final directory = Directory(directoryPath);
     await directory.create(recursive: true);
 
-    final safeName = attachment.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final destination = _overwriteSameNameFiles
         ? File(p.join(directory.path, safeName))
         : await _availableDestination(directory, safeName);
     await File(attachment.path).copy(destination.path);
     return destination.path;
+  }
+
+  String _mimeForName(String fileName) {
+    final extension = p.extension(fileName).toLowerCase();
+    return switch (extension) {
+      '.jpg' || '.jpeg' => 'image/jpeg',
+      '.png' => 'image/png',
+      '.gif' => 'image/gif',
+      '.webp' => 'image/webp',
+      '.bmp' => 'image/bmp',
+      '.pdf' => 'application/pdf',
+      '.txt' || '.md' => 'text/plain',
+      _ => 'application/octet-stream',
+    };
   }
 
   Future<File> _availableDestination(
@@ -1592,6 +1645,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
+  void _openNavDrawer() => _scaffoldKey.currentState?.openDrawer();
+
   Future<void> _chooseAutoSaveDirectory() async {
     final directory = await getDirectoryPath(
       initialDirectory: Directory(_autoSaveDirectory).existsSync()
@@ -1836,36 +1891,55 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
-    final showChat = width >= 880;
-    final conversationWidth = showChat
+    // Wide (tablet/desktop): list + chat side by side. Narrow (phone): one at a
+    // time, navigating list -> chat -> back.
+    final wide = width >= 880;
+    // The left rail shows on tablets+desktop; true phones use a Drawer instead.
+    final hasRail = width >= 560;
+    final showDrawer = !hasRail;
+    final conversationWidth = wide
         ? 320.0
-        : width >= 560
+        : hasRail
         ? width - 76
         : width;
     final conversations = _visibleConversations;
     final safeSelected = _selected.clamp(0, conversations.length - 1).toInt();
     final selected = conversations[safeSelected];
+    final showChatPage = wide || _mobileChatOpen;
 
     return Scaffold(
-      body: ColoredBox(
-        color: _surface,
-        child: Row(
-          children: [
-            if (width >= 560)
-              _Sidebar(
-                activeSection: _activeSection,
-                onChats: _showChatsSection,
-                onTheme: _showThemeSection,
-                onSettings: _showSettingsSection,
-                onHistory: _showHistorySection,
-              ),
-            if (_activeSection == _MainSection.theme)
+      key: _scaffoldKey,
+      backgroundColor: _panel,
+      drawer: showDrawer
+          ? _NavDrawer(
+              activeSection: _activeSection,
+              onChats: _showChatsSection,
+              onTheme: _showThemeSection,
+              onSettings: _showSettingsSection,
+              onHistory: _showHistorySection,
+            )
+          : null,
+      body: SafeArea(
+        child: ColoredBox(
+          color: _surface,
+          child: Row(
+            children: [
+              if (hasRail)
+                _Sidebar(
+                  activeSection: _activeSection,
+                  onChats: _showChatsSection,
+                  onTheme: _showThemeSection,
+                  onSettings: _showSettingsSection,
+                  onHistory: _showHistorySection,
+                ),
+              if (_activeSection == _MainSection.theme)
               Expanded(
                 child: ThemePage(
                   themeMode: _themeMode,
                   themeColor: _themeColor,
                   onThemeModeChanged: _setThemeMode,
                   onThemeColorChanged: _setThemeColor,
+                  onMenu: showDrawer ? _openNavDrawer : null,
                 ),
               )
             else if (_activeSection == _MainSection.history)
@@ -1876,6 +1950,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                   onOpenFolder: _openHistoryFolder,
                   onDelete: _deleteHistoryEntry,
                   onClear: _clearReceiveHistory,
+                  onMenu: showDrawer ? _openNavDrawer : null,
                 ),
               )
             else if (_activeSection == _MainSection.settings)
@@ -1892,76 +1967,95 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                   onOverwriteSameNameFilesChanged: _setOverwriteSameNameFiles,
                   onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
                   onChooseDirectory: _chooseAutoSaveDirectory,
+                  onMenu: showDrawer ? _openNavDrawer : null,
                 ),
               )
             else ...[
-              SizedBox(
-                width: conversationWidth,
-                child: ConversationPanel(
-                  conversations: conversations,
-                  isScanning: _isScanning,
-                  scanStatus: _scanStatus,
-                  selected: _selected,
-                  onRefresh: _refreshDevices,
-                  onShowQrCode: _showConnectionQrDialog,
-                  onManualConnect: _showManualConnectDialog,
-                  onContextMenu: _showConversationMenu,
-                  onSelect: (index) => setState(() {
-                    _selected = index;
-                    _pendingAttachments.clear();
-                    _messageSelectionMode = false;
-                    _showDeviceDetails = false;
-                    _previewImage = null;
-                    _selectedMessageIds.clear();
-                    if (index >= _networkConversationCount) {
-                      final conversationIndex =
-                          index - _networkConversationCount;
-                      _conversations[conversationIndex] =
-                          _conversations[conversationIndex].copyWith(unread: 0);
-                    }
-                  }),
+              // Phone with chat open: hide the list and show the chat full-width.
+              if (!(_mobileChatOpen && !wide))
+                SizedBox(
+                  width: conversationWidth,
+                  child: ConversationPanel(
+                    conversations: conversations,
+                    isScanning: _isScanning,
+                    scanStatus: _scanStatus,
+                    selected: _selected,
+                    onRefresh: _refreshDevices,
+                    onShowQrCode: _showConnectionQrDialog,
+                    onManualConnect: _showManualConnectDialog,
+                    onContextMenu: _showConversationMenu,
+                    onMenu: showDrawer ? _openNavDrawer : null,
+                    onSelect: (index) => setState(() {
+                      _selected = index;
+                      _pendingAttachments.clear();
+                      _messageSelectionMode = false;
+                      _showDeviceDetails = false;
+                      _previewImage = null;
+                      _selectedMessageIds.clear();
+                      if (!wide) _mobileChatOpen = true;
+                      if (index >= _networkConversationCount) {
+                        final conversationIndex =
+                            index - _networkConversationCount;
+                        _conversations[conversationIndex] =
+                            _conversations[conversationIndex].copyWith(
+                              unread: 0,
+                            );
+                      }
+                    }),
+                  ),
                 ),
-              ),
-              if (showChat)
+              if (showChatPage)
                 Expanded(
-                  child: ChatPanel(
-                    conversation: selected,
-                    controller: _controller,
-                    scrollController: _scrollController,
-                    pendingAttachments: _pendingAttachments,
-                    onSend: _sendMessage,
-                    onSendImage: _sendImage,
-                    onSendFile: _sendFile,
-                    onPasteImages: _handlePaste,
-                    onRemovePendingAttachment: _removePendingAttachment,
-                    selectionMode: _messageSelectionMode,
-                    showDetails: _showDeviceDetails,
-                    selectedMessageIds: _selectedMessageIds,
-                    onEnterSelectionMode: _enterMessageSelectionMode,
-                    onExitSelectionMode: _exitMessageSelectionMode,
-                    onShowDetails: _showConversationDetails,
-                    onHideDetails: _hideConversationDetails,
-                    onToggleMessageSelection: _toggleMessageSelection,
-                    onDeleteSelectedMessages: _deleteSelectedMessages,
-                    onToggleSelectAllMessages: _toggleSelectAllMessages,
-                    onRetrySendAttachment: _retrySendAttachment,
-                    onCancelTransfer: _cancelTransfer,
-                    onCopyAttachment: _copyAttachmentPath,
-                    previewImage: _previewImage,
-                    onPreviewImage: _openImagePreview,
-                    onClosePreview: _closeImagePreview,
-                    clipboardAutoSendEnabled: _clipboardAutoSendFingerprints
-                        .contains(_selectedConversationFingerprint),
-                    onClipboardAutoSendChanged: (value) {
-                      final fingerprint = _selectedConversationFingerprint;
-                      if (fingerprint != null) {
-                        _setClipboardAutoSendEnabled(fingerprint, value);
+                  child: PopScope(
+                    canPop: wide || !_mobileChatOpen,
+                    onPopInvokedWithResult: (didPop, _) {
+                      if (!didPop && !wide && _mobileChatOpen) {
+                        setState(() => _mobileChatOpen = false);
                       }
                     },
+                    child: ChatPanel(
+                      conversation: selected,
+                      controller: _controller,
+                      scrollController: _scrollController,
+                      pendingAttachments: _pendingAttachments,
+                      onSend: _sendMessage,
+                      onSendImage: _sendImage,
+                      onSendFile: _sendFile,
+                      onPasteImages: _handlePaste,
+                      onRemovePendingAttachment: _removePendingAttachment,
+                      selectionMode: _messageSelectionMode,
+                      showDetails: _showDeviceDetails,
+                      selectedMessageIds: _selectedMessageIds,
+                      onEnterSelectionMode: _enterMessageSelectionMode,
+                      onExitSelectionMode: _exitMessageSelectionMode,
+                      onShowDetails: _showConversationDetails,
+                      onHideDetails: _hideConversationDetails,
+                      onToggleMessageSelection: _toggleMessageSelection,
+                      onDeleteSelectedMessages: _deleteSelectedMessages,
+                      onToggleSelectAllMessages: _toggleSelectAllMessages,
+                      onRetrySendAttachment: _retrySendAttachment,
+                      onCancelTransfer: _cancelTransfer,
+                      onCopyAttachment: _copyAttachmentPath,
+                      previewImage: _previewImage,
+                      onPreviewImage: _openImagePreview,
+                      onClosePreview: _closeImagePreview,
+                      clipboardAutoSendEnabled: _clipboardAutoSendFingerprints
+                          .contains(_selectedConversationFingerprint),
+                      onClipboardAutoSendChanged: (value) {
+                        final fingerprint = _selectedConversationFingerprint;
+                        if (fingerprint != null) {
+                          _setClipboardAutoSendEnabled(fingerprint, value);
+                        }
+                      },
+                      onMobileBack: (!wide && _mobileChatOpen)
+                          ? () => setState(() => _mobileChatOpen = false)
+                          : null,
+                    ),
                   ),
                 ),
             ],
           ],
+        ),
         ),
       ),
     );
@@ -2032,6 +2126,127 @@ class _Sidebar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Phone navigation: the left rail is replaced by this slide-in drawer on
+/// narrow screens. Selecting an item switches section and closes the drawer.
+class _NavDrawer extends StatelessWidget {
+  const _NavDrawer({
+    required this.activeSection,
+    required this.onChats,
+    required this.onTheme,
+    required this.onSettings,
+    required this.onHistory,
+  });
+
+  final _MainSection activeSection;
+  final VoidCallback onChats;
+  final VoidCallback onTheme;
+  final VoidCallback onSettings;
+  final VoidCallback onHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      backgroundColor: _surface,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 20,
+                    backgroundColor: _accent,
+                    child: const Text(
+                      'T',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'NearSend',
+                    style: TextStyle(
+                      color: _text,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: _line),
+            _NavDrawerItem(
+              icon: Icons.chat_bubble_rounded,
+              label: '消息',
+              active: activeSection == _MainSection.chats,
+              onTap: () => _select(context, onChats),
+            ),
+            _NavDrawerItem(
+              icon: Icons.history_rounded,
+              label: '接收历史',
+              active: activeSection == _MainSection.history,
+              onTap: () => _select(context, onHistory),
+            ),
+            _NavDrawerItem(
+              icon: Icons.palette_rounded,
+              label: '主题',
+              active: activeSection == _MainSection.theme,
+              onTap: () => _select(context, onTheme),
+            ),
+            _NavDrawerItem(
+              icon: Icons.settings_rounded,
+              label: '设置',
+              active: activeSection == _MainSection.settings,
+              onTap: () => _select(context, onSettings),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _select(BuildContext context, VoidCallback action) {
+    Navigator.of(context).pop();
+    action();
+  }
+}
+
+class _NavDrawerItem extends StatelessWidget {
+  const _NavDrawerItem({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Icon(icon, color: active ? _accent : _muted),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: active ? _accent : _text,
+          fontSize: 15,
+          fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+        ),
+      ),
+      selected: active,
+      selectedTileColor: _accentSoft,
     );
   }
 }
@@ -2391,12 +2606,14 @@ class ThemePage extends StatelessWidget {
     required this.themeColor,
     required this.onThemeModeChanged,
     required this.onThemeColorChanged,
+    this.onMenu,
   });
 
   final AppThemeMode themeMode;
   final Color themeColor;
   final ValueChanged<AppThemeMode> onThemeModeChanged;
   final ValueChanged<Color> onThemeColorChanged;
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -2413,13 +2630,21 @@ class ThemePage extends StatelessWidget {
               border: Border(bottom: BorderSide(color: _line)),
             ),
             alignment: Alignment.centerLeft,
-            child: Text(
-              '主题',
-              style: TextStyle(
-                color: _text,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
+            child: Row(
+              children: [
+                if (onMenu != null) ...[
+                  _PageMenuButton(onPressed: onMenu!),
+                  const SizedBox(width: 8),
+                ],
+                Text(
+                  '主题',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -2627,6 +2852,7 @@ class SettingsPage extends StatelessWidget {
     required this.onOverwriteSameNameFilesChanged,
     required this.onMinimizeToTrayChanged,
     required this.onChooseDirectory,
+    this.onMenu,
   });
 
   final bool autoSaveEnabled;
@@ -2638,6 +2864,7 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<bool> onOverwriteSameNameFilesChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final VoidCallback onChooseDirectory;
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -2654,13 +2881,21 @@ class SettingsPage extends StatelessWidget {
               border: Border(bottom: BorderSide(color: _line)),
             ),
             alignment: Alignment.centerLeft,
-            child: Text(
-              '设置',
-              style: TextStyle(
-                color: _text,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-              ),
+            child: Row(
+              children: [
+                if (onMenu != null) ...[
+                  _PageMenuButton(onPressed: onMenu!),
+                  const SizedBox(width: 8),
+                ],
+                Text(
+                  '设置',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -2708,7 +2943,9 @@ class SettingsPage extends StatelessWidget {
                                   ),
                                   SizedBox(height: 4),
                                   Text(
-                                    '开启后，对方发来的文件会自动保存到指定路径',
+                                    Platform.isAndroid
+                                        ? '开启后，对方发来的文件会自动保存到“下载/NearSend”'
+                                        : '开启后，对方发来的文件会自动保存到指定路径',
                                     style: TextStyle(
                                       color: _muted,
                                       fontSize: 13,
@@ -2725,49 +2962,72 @@ class SettingsPage extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Container(
-                                height: 42,
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF8F6F0),
-                                  border: Border.all(color: _line),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: SelectableText(
-                                  autoSaveDirectory,
-                                  maxLines: 1,
-                                  style: TextStyle(
-                                    color: _text,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
+                        // Android saves into the public Downloads folder via
+                        // MediaStore; choosing an arbitrary folder needs SAF and
+                        // is out of scope, so only desktop shows a path picker.
+                        if (Platform.isAndroid)
+                          Container(
+                            height: 42,
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8F6F0),
+                              border: Border.all(color: _line),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '下载/NearSend',
+                              style: TextStyle(
+                                color: _text,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          )
+                        else
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  height: 42,
+                                  alignment: Alignment.centerLeft,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8F6F0),
+                                    border: Border.all(color: _line),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: SelectableText(
+                                    autoSaveDirectory,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      color: _text,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 10),
-                            IconButton(
-                              onPressed: onChooseDirectory,
-                              icon: const Icon(
-                                Icons.folder_open_rounded,
-                                size: 20,
-                              ),
-                              color: _text,
-                              style: IconButton.styleFrom(
-                                fixedSize: const Size(42, 42),
-                                side: BorderSide(color: _line),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
+                              const SizedBox(width: 10),
+                              IconButton(
+                                onPressed: onChooseDirectory,
+                                icon: const Icon(
+                                  Icons.folder_open_rounded,
+                                  size: 20,
+                                ),
+                                color: _text,
+                                style: IconButton.styleFrom(
+                                  fixedSize: const Size(42, 42),
+                                  side: BorderSide(color: _line),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                        ),
+                            ],
+                          ),
                       ],
                     ),
                   ),
@@ -2881,6 +3141,7 @@ class HistoryPage extends StatelessWidget {
     required this.onOpenFolder,
     required this.onDelete,
     required this.onClear,
+    this.onMenu,
   });
 
   final List<ReceiveHistoryEntry> entries;
@@ -2888,6 +3149,7 @@ class HistoryPage extends StatelessWidget {
   final ValueChanged<ReceiveHistoryEntry> onOpenFolder;
   final ValueChanged<ReceiveHistoryEntry> onDelete;
   final VoidCallback onClear;
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -2905,6 +3167,10 @@ class HistoryPage extends StatelessWidget {
             ),
             child: Row(
               children: [
+                if (onMenu != null) ...[
+                  _PageMenuButton(onPressed: onMenu!),
+                  const SizedBox(width: 8),
+                ],
                 Text(
                   '接收历史',
                   style: TextStyle(
@@ -3158,6 +3424,7 @@ class ConversationPanel extends StatelessWidget {
     required this.onManualConnect,
     required this.onContextMenu,
     required this.onSelect,
+    this.onMenu,
   });
 
   final List<Conversation> conversations;
@@ -3169,6 +3436,9 @@ class ConversationPanel extends StatelessWidget {
   final VoidCallback onManualConnect;
   final void Function(int index, Offset position) onContextMenu;
   final ValueChanged<int> onSelect;
+
+  /// Opens the navigation drawer on phone layouts; null on tablet/desktop.
+  final VoidCallback? onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -3188,6 +3458,12 @@ class ConversationPanel extends StatelessWidget {
               children: [
                 Row(
                   children: [
+                    if (onMenu != null)
+                      _ToolButton(
+                        icon: Icons.menu_rounded,
+                        tooltip: '菜单',
+                        onPressed: onMenu,
+                      ),
                     _ToolButton(
                       icon: Icons.refresh_rounded,
                       tooltip: '刷新',
@@ -3521,12 +3797,14 @@ class ChatPanel extends StatelessWidget {
     required this.onClosePreview,
     required this.clipboardAutoSendEnabled,
     required this.onClipboardAutoSendChanged,
+    this.onMobileBack,
   });
 
   final Conversation conversation;
   final TextEditingController controller;
   final ScrollController scrollController;
   final List<MessageAttachment> pendingAttachments;
+  final VoidCallback? onMobileBack;
   final VoidCallback onSend;
   final VoidCallback onSendImage;
   final VoidCallback onSendFile;
@@ -3573,6 +3851,7 @@ class ChatPanel extends StatelessWidget {
                 onToggleSelectAllMessages: () => onToggleSelectAllMessages(
                   conversation.messages.map((message) => message.id).toSet(),
                 ),
+                onMobileBack: onMobileBack,
               ),
               if (showDetails)
                 Expanded(
@@ -3722,6 +4001,7 @@ class ChatHeader extends StatelessWidget {
     required this.onHideDetails,
     required this.onDeleteSelectedMessages,
     required this.onToggleSelectAllMessages,
+    this.onMobileBack,
   });
 
   final Conversation conversation;
@@ -3736,6 +4016,10 @@ class ChatHeader extends StatelessWidget {
   final VoidCallback onDeleteSelectedMessages;
   final VoidCallback onToggleSelectAllMessages;
 
+  /// On phone layouts, returns from the full-screen chat to the list. Null on
+  /// wide layouts where the list is always visible beside the chat.
+  final VoidCallback? onMobileBack;
+
   @override
   Widget build(BuildContext context) {
     final hasSelection = selectedCount > 0;
@@ -3749,6 +4033,14 @@ class ChatHeader extends StatelessWidget {
       ),
       child: Row(
         children: [
+          if (onMobileBack != null && !selectionMode && !showDetails) ...[
+            _HeaderButton(
+              icon: Icons.arrow_back_rounded,
+              tooltip: '返回列表',
+              onPressed: onMobileBack,
+            ),
+            const SizedBox(width: 8),
+          ],
           Expanded(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -3844,6 +4136,30 @@ class _HeaderButton extends StatelessWidget {
         onPressed: onPressed,
         icon: Icon(icon, size: 20),
         color: color ?? _muted,
+        style: IconButton.styleFrom(
+          fixedSize: const Size(42, 42),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      ),
+    );
+  }
+}
+
+/// A 42x42 menu (hamburger) button shown in page title bars on phone layouts
+/// to open the navigation drawer.
+class _PageMenuButton extends StatelessWidget {
+  const _PageMenuButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: '菜单',
+      child: IconButton(
+        onPressed: onPressed,
+        icon: const Icon(Icons.menu_rounded, size: 22),
+        color: _text,
         style: IconButton.styleFrom(
           fixedSize: const Size(42, 42),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
