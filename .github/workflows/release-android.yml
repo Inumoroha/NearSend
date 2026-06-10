@@ -1,0 +1,50 @@
+name: Release Android
+
+# 推送形如 v1.0.0 的标签时，自动编译 Android APK 并发布到对应 Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: teasend_ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.4
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 单个通用 APK（兼容所有架构，体积略大，安装最省心）
+      - name: Build universal APK
+        run: flutter build apk --release
+
+      - name: Rename APK
+        run: mv build/app/outputs/flutter-apk/app-release.apk NearSend-${{ github.ref_name }}-android.apk
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: teasend_ui/NearSend-${{ github.ref_name }}-android.apk
+          generate_release_notes: true

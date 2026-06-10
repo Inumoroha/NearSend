@@ -26,7 +26,10 @@ import 'services/windows_clipboard_files.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await windowManager.ensureInitialized();
+  // Window management is desktop-only; skip it on mobile platforms.
+  if (Platform.isWindows) {
+    await windowManager.ensureInitialized();
+  }
   runApp(const NearSendApp());
 }
 
@@ -267,8 +270,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void initState() {
     super.initState();
     _autoSaveDirectory = _defaultAutoSaveDirectory;
-    windowManager.addListener(this);
-    trayManager.addListener(this);
+    if (Platform.isWindows) {
+      windowManager.addListener(this);
+      trayManager.addListener(this);
+    }
     _applyPalette(_buildPalette(_themeMode, _themeColor));
     unawaited(_restoreWindowSettings());
     unawaited(_loadReceiveHistory());
@@ -285,11 +290,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
   @override
   void dispose() {
-    windowManager.removeListener(this);
-    trayManager.removeListener(this);
+    if (Platform.isWindows) {
+      windowManager.removeListener(this);
+      trayManager.removeListener(this);
+      unawaited(trayManager.destroy());
+      unawaited(windowManager.setPreventClose(false));
+    }
     _clipboardPollTimer?.cancel();
-    unawaited(trayManager.destroy());
-    unawaited(windowManager.setPreventClose(false));
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
@@ -345,7 +352,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         const <String>[];
     _applyPalette(_buildPalette(themeMode, themeColor));
 
-    if (enabled) {
+    if (enabled && Platform.isWindows) {
       await _nativeWindow.setMinimizeToTrayEnabled(true);
       await windowManager.setPreventClose(true);
       unawaited(_ensureTrayReady());
@@ -400,6 +407,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_minimizeToTrayPreferenceKey, enabled);
 
+    if (!Platform.isWindows) return;
+
     if (enabled) {
       await _nativeWindow.setMinimizeToTrayEnabled(true);
       await windowManager.setPreventClose(true);
@@ -422,7 +431,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _ensureTrayReady() async {
-    if (_trayReady) return;
+    if (!Platform.isWindows || _trayReady) return;
 
     await trayManager.setIcon('windows/runner/resources/app_icon.ico');
     await trayManager.setToolTip('NearSend');
@@ -439,7 +448,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _hideToTray() async {
-    if (!_minimizeToTrayEnabled) return;
+    if (!Platform.isWindows || !_minimizeToTrayEnabled) return;
     try {
       await _ensureTrayReady();
     } catch (_) {
@@ -451,12 +460,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _restoreFromTray() async {
+    if (!Platform.isWindows) return;
     await windowManager.setSkipTaskbar(false);
     await windowManager.show();
     await windowManager.focus();
   }
 
   Future<void> _quitFromTray() async {
+    if (!Platform.isWindows) return;
     _quittingFromTray = true;
     await trayManager.destroy();
     await _nativeWindow.setMinimizeToTrayEnabled(false);
@@ -2769,18 +2780,21 @@ class SettingsPage extends StatelessWidget {
                   value: overwriteSameNameFiles,
                   onChanged: onOverwriteSameNameFilesChanged,
                 ),
-                const SizedBox(height: 14),
-                _SettingsSwitchCard(
-                  icon: Icons.system_update_alt_rounded,
-                  title: '最小化到托盘',
-                  description: restoringWindowSettings
-                      ? '正在读取窗口设置'
-                      : '开启后，最小化或关闭窗口时隐藏到系统托盘',
-                  value: minimizeToTrayEnabled,
-                  onChanged: restoringWindowSettings
-                      ? null
-                      : onMinimizeToTrayChanged,
-                ),
+                // Tray/minimize is a desktop-only feature.
+                if (Platform.isWindows) ...[
+                  const SizedBox(height: 14),
+                  _SettingsSwitchCard(
+                    icon: Icons.system_update_alt_rounded,
+                    title: '最小化到托盘',
+                    description: restoringWindowSettings
+                        ? '正在读取窗口设置'
+                        : '开启后，最小化或关闭窗口时隐藏到系统托盘',
+                    value: minimizeToTrayEnabled,
+                    onChanged: restoringWindowSettings
+                        ? null
+                        : onMinimizeToTrayChanged,
+                  ),
+                ],
               ],
             ),
           ),
