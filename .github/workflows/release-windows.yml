@@ -1,0 +1,47 @@
+name: Release Windows
+
+# 推送形如 v1.0.0 的标签时，自动编译 Windows 版并发布 Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 允许 workflow 用 GITHUB_TOKEN 创建 Release
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: teasend_ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.4
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Windows release
+        run: flutter build windows --release
+
+      - name: Package into zip
+        shell: pwsh
+        run: |
+          $zip = "NearSend-${{ github.ref_name }}-windows.zip"
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath $zip -Force
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: teasend_ui/NearSend-${{ github.ref_name }}-windows.zip
+          generate_release_notes: true
