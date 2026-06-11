@@ -47,4 +47,15 @@ class AndroidPlatform {
       // Best-effort cleanup.
     }
   }
+
+  /// Returns the Android device name (e.g. "HUAWEI PCE-W30"), or null off
+  /// Android / on failure.
+  static Future<String?> deviceName() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('getDeviceName');
+    } catch (_) {
+      return null;
+    }
+  }
 }

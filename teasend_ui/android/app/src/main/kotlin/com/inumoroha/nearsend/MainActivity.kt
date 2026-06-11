@@ -43,9 +43,25 @@ class MainActivity : FlutterActivity() {
                     releaseMulticastLock()
                     result.success(true)
                 }
+                "getDeviceName" -> {
+                    result.success(deviceName())
+                }
                 else -> result.notImplemented()
             }
         }
+    }
+
+    /** Human-readable device name, e.g. "HUAWEI PCE-W30". */
+    private fun deviceName(): String {
+        val manufacturer = (Build.MANUFACTURER ?: "").trim()
+        val model = (Build.MODEL ?: "").trim()
+        val name = when {
+            model.isEmpty() -> manufacturer
+            manufacturer.isEmpty() -> model
+            model.startsWith(manufacturer, ignoreCase = true) -> model
+            else -> "$manufacturer $model"
+        }
+        return name.ifEmpty { "Android Device" }
     }
 
     /**

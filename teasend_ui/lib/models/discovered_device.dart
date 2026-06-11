@@ -11,6 +11,14 @@ extension DiscoveredDeviceTypeParsing on DiscoveredDeviceType {
       _ => DiscoveredDeviceType.desktop,
     };
   }
+
+  /// Parses a persisted enum name (see [DiscoveredDeviceType.name]).
+  static DiscoveredDeviceType fromName(Object? value) {
+    return DiscoveredDeviceType.values.firstWhere(
+      (type) => type.name == value,
+      orElse: () => DiscoveredDeviceType.desktop,
+    );
+  }
 }
 
 class DiscoveredDevice {
@@ -103,6 +111,39 @@ class DiscoveredDevice {
       download: download,
       lastSeen: lastSeen ?? this.lastSeen,
       deviceModel: deviceModel,
+    );
+  }
+
+  /// Serializes the device for local persistence (see ConversationStore).
+  Map<String, dynamic> toJson() {
+    return {
+      'alias': alias,
+      'ip': ip,
+      'version': version,
+      'port': port,
+      'https': https,
+      'fingerprint': fingerprint,
+      'deviceType': deviceType.name,
+      'download': download,
+      'lastSeen': lastSeen.toIso8601String(),
+      'deviceModel': deviceModel,
+    };
+  }
+
+  factory DiscoveredDevice.fromJson(Map<String, dynamic> json) {
+    return DiscoveredDevice(
+      alias: json['alias'] as String? ?? '未知设备',
+      ip: json['ip'] as String? ?? '',
+      version: json['version'] as String? ?? '1.0',
+      port: json['port'] is int ? json['port'] as int : 53317,
+      https: json['https'] as bool? ?? false,
+      fingerprint: json['fingerprint'] as String? ?? '',
+      deviceType: DiscoveredDeviceTypeParsing.fromName(json['deviceType']),
+      download: json['download'] as bool? ?? false,
+      lastSeen:
+          DateTime.tryParse(json['lastSeen'] as String? ?? '') ??
+          DateTime.now(),
+      deviceModel: json['deviceModel'] as String?,
     );
   }
 }

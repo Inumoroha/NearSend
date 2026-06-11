@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:toastification/toastification.dart';
 import 'package:tray_manager/tray_manager.dart';
@@ -17,6 +18,7 @@ import 'models/discovered_device.dart';
 import 'models/nearsend_message.dart';
 import 'models/receive_history_entry.dart';
 import 'services/android_platform.dart';
+import 'services/conversation_store.dart';
 import 'services/lan_discovery_service.dart';
 import 'services/localsend_file_transfer.dart';
 import 'services/localsend_identity.dart';
@@ -35,18 +37,18 @@ Future<void> main() async {
   runApp(const NearSendApp());
 }
 
-Color _sidebar = const Color(0xFF1F1E1D);
-Color _sidebarMuted = const Color(0xFF8D8A80);
-Color _panel = const Color(0xFFF5F4EE);
+Color _sidebar = const Color(0xFFFFFFFF);
+Color _sidebarMuted = const Color(0xFF64748B);
+Color _panel = const Color(0xFFF4F6FA);
 Color _surface = const Color(0xFFFFFFFF);
-Color _line = const Color(0xFFE5E3DA);
-Color _text = const Color(0xFF1F1E1D);
-Color _muted = const Color(0xFF6F6E69);
-Color _accent = const Color(0xFFD97757);
-Color _accentSoft = const Color(0xFFF7EDE8);
+Color _line = const Color(0xFFE2E8F0);
+Color _text = const Color(0xFF0F172A);
+Color _muted = const Color(0xFF64748B);
+Color _accent = const Color(0xFF2563EB);
+Color _accentSoft = const Color(0xFFEFF6FF);
 const _warning = Color(0xFFCB9A4B);
-Color _bubbleMe = const Color(0xFFF5E9E2);
-Color _chatBg = const Color(0xFFFAF9F5);
+Color _bubbleMe = const Color(0xFFDBEAFE);
+Color _chatBg = const Color(0xFFF8FAFC);
 const _minimizeToTrayPreferenceKey = 'minimize_to_tray';
 const _overwriteSameNameFilesPreferenceKey = 'overwrite_same_name_files';
 const _themeModePreferenceKey = 'theme_mode';
@@ -56,9 +58,9 @@ const _clipboardAutoSendPreferenceKey = 'clipboard_auto_send_fingerprints';
 enum AppThemeMode { light, dark }
 
 const _themeColorOptions = [
-  Color(0xFFD97757),
+  Color(0xFF2563EB),
   Color(0xFF3D8F73),
-  Color(0xFF3B82C4),
+  Color(0xFF0F172A),
   Color(0xFF8B6FD1),
   Color(0xFFD08B38),
   Color(0xFFE0527A),
@@ -95,38 +97,38 @@ class _ThemePalette {
 _ThemePalette _buildPalette(AppThemeMode mode, Color accent) {
   if (mode == AppThemeMode.dark) {
     return _ThemePalette(
-      sidebar: const Color(0xFF171615),
-      sidebarMuted: const Color(0xFF8F8A82),
-      panel: const Color(0xFF23211F),
-      surface: const Color(0xFF2C2926),
-      line: const Color(0xFF3F3A35),
-      text: const Color(0xFFF2EEE8),
-      muted: const Color(0xFFB4ACA3),
+      sidebar: const Color(0xFF020617),
+      sidebarMuted: const Color(0xFF94A3B8),
+      panel: const Color(0xFF0F172A),
+      surface: const Color(0xFF111827),
+      line: const Color(0xFF1E293B),
+      text: const Color(0xFFF8FAFC),
+      muted: const Color(0xFFCBD5E1),
       accent: accent,
       accentSoft: Color.alphaBlend(
         accent.withValues(alpha: 0.18),
-        const Color(0xFF2C2926),
+        const Color(0xFF111827),
       ),
       bubbleMe: Color.alphaBlend(
         accent.withValues(alpha: 0.20),
-        const Color(0xFF2C2926),
+        const Color(0xFF111827),
       ),
-      chatBg: const Color(0xFF1F1D1B),
+      chatBg: const Color(0xFF020617),
     );
   }
 
   return _ThemePalette(
-    sidebar: const Color(0xFF1F1E1D),
-    sidebarMuted: const Color(0xFF8D8A80),
-    panel: const Color(0xFFF5F4EE),
+    sidebar: const Color(0xFFFFFFFF),
+    sidebarMuted: const Color(0xFF64748B),
+    panel: const Color(0xFFF4F6FA),
     surface: const Color(0xFFFFFFFF),
-    line: const Color(0xFFE5E3DA),
-    text: const Color(0xFF1F1E1D),
-    muted: const Color(0xFF6F6E69),
+    line: const Color(0xFFE2E8F0),
+    text: const Color(0xFF0F172A),
+    muted: const Color(0xFF64748B),
     accent: accent,
-    accentSoft: Color.alphaBlend(accent.withValues(alpha: 0.12), Colors.white),
-    bubbleMe: Color.alphaBlend(accent.withValues(alpha: 0.14), Colors.white),
-    chatBg: const Color(0xFFFAF9F5),
+    accentSoft: Color.alphaBlend(accent.withValues(alpha: 0.10), Colors.white),
+    bubbleMe: Color.alphaBlend(accent.withValues(alpha: 0.18), Colors.white),
+    chatBg: const Color(0xFFF8FAFC),
   );
 }
 
@@ -144,6 +146,81 @@ void _applyPalette(_ThemePalette palette) {
   _chatBg = palette.chatBg;
 }
 
+class _SoftAppear extends StatelessWidget {
+  const _SoftAppear({
+    super.key,
+    required this.child,
+    this.delay = Duration.zero,
+    this.offset = const Offset(0, 10),
+    this.duration = const Duration(milliseconds: 260),
+  });
+
+  final Widget child;
+  final Duration delay;
+  final Offset offset;
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: duration + delay,
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) {
+        final delayed = delay == Duration.zero
+            ? value
+            : ((value * (duration + delay).inMilliseconds -
+                          delay.inMilliseconds) /
+                      duration.inMilliseconds)
+                  .clamp(0.0, 1.0);
+        return Opacity(
+          opacity: delayed,
+          child: Transform.translate(
+            offset: Offset.lerp(offset, Offset.zero, delayed)!,
+            child: child,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+class _PressableScale extends StatefulWidget {
+  const _PressableScale({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_PressableScale> createState() => _PressableScaleState();
+}
+
+class _PressableScaleState extends State<_PressableScale> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() {
+      _pressed = value;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => _setPressed(true),
+      onPointerUp: (_) => _setPressed(false),
+      onPointerCancel: (_) => _setPressed(false),
+      child: AnimatedScale(
+        scale: _pressed ? 0.96 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class NearSendApp extends StatelessWidget {
   const NearSendApp({super.key, this.enableDiscovery = true});
 
@@ -152,37 +229,60 @@ class NearSendApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ToastificationWrapper(
-      child: MaterialApp(
-        title: 'NearSend',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: _accent,
-            brightness: Brightness.light,
+      child: ShadApp.custom(
+        theme: ShadThemeData(
+          brightness: Brightness.light,
+          colorScheme: const ShadZincColorScheme.light().copyWith(
+            primary: _accent,
+            ring: _accent,
+            selection: _accent.withValues(alpha: 0.20),
           ),
-          fontFamily: 'Microsoft YaHei',
-          scaffoldBackgroundColor: const Color(0xFFEDE9DE),
-          dialogTheme: DialogThemeData(
-            backgroundColor: Colors.transparent,
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          popupMenuTheme: PopupMenuThemeData(
-            color: _surface,
-            surfaceTintColor: Colors.transparent,
-            elevation: 10,
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: _line),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            textStyle: TextStyle(color: _text, fontSize: 13),
-          ),
-          useMaterial3: true,
+          radius: const BorderRadius.all(Radius.circular(8)),
         ),
-        home: ChatPrototypePage(enableDiscovery: enableDiscovery),
+        darkTheme: ShadThemeData(
+          brightness: Brightness.dark,
+          colorScheme: const ShadZincColorScheme.dark().copyWith(
+            primary: _accent,
+            ring: _accent,
+            selection: _accent.withValues(alpha: 0.28),
+          ),
+          radius: const BorderRadius.all(Radius.circular(8)),
+        ),
+        themeMode: ThemeMode.light,
+        appBuilder: (context) {
+          return MaterialApp(
+            title: 'NearSend',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              colorScheme: ColorScheme.fromSeed(
+                seedColor: _accent,
+                brightness: Brightness.light,
+              ),
+              fontFamily: 'Microsoft YaHei',
+              scaffoldBackgroundColor: const Color(0xFFEDE9DE),
+              dialogTheme: DialogThemeData(
+                backgroundColor: Colors.transparent,
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              popupMenuTheme: PopupMenuThemeData(
+                color: _surface,
+                surfaceTintColor: Colors.transparent,
+                elevation: 10,
+                shape: RoundedRectangleBorder(
+                  side: BorderSide(color: _line),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                textStyle: TextStyle(color: _text, fontSize: 13),
+              ),
+              useMaterial3: true,
+            ),
+            home: ChatPrototypePage(enableDiscovery: enableDiscovery),
+          );
+        },
       ),
     );
   }
@@ -217,8 +317,16 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   );
   final Map<String, DiscoveredDevice> _devices = {};
   final Map<String, Conversation> _deviceConversations = {};
+  // Fingerprints of conversations the user explicitly deleted this session.
+  // Discovery re-announces are ignored for these so a deleted chat does not
+  // resurrect itself; a new inbound message clears the dismissal.
+  final Set<String> _dismissedFingerprints = {};
+  // Serializes _saveConversations so concurrent writes cannot land out of
+  // order and persist a stale snapshot last.
+  Future<void> _saveChain = Future<void>.value();
   final Map<String, TransferHandle> _transferHandles = {};
   final _historyStore = ReceiveHistoryStore();
+  final _conversationStore = ConversationStore();
   List<ReceiveHistoryEntry> _receiveHistory = [];
   final Set<String> _clipboardAutoSendFingerprints = {};
   Timer? _clipboardPollTimer;
@@ -246,23 +354,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   bool _mobileChatOpen = false;
   final Set<String> _selectedMessageIds = {};
 
-  final List<Conversation> _conversations = [
-    Conversation(
-      title: '文件传输助手',
-      subtitle: '已保存 3 个文件到本地',
-      status: '常用工具',
-      time: '周五',
-      initials: '文',
-      messages: [
-        ChatMessage('周五 14:22', system: true),
-        ChatMessage('文件会暂时保留在本地下载目录', sender: '文'),
-      ],
-      files: [
-        TransferFile('invoice.pdf', '680 KB', 100, FileKind.pdf),
-        TransferFile('photo-set.zip', '42.6 MB', 100, FileKind.archive),
-      ],
-    ),
-  ];
+  final List<Conversation> _conversations = [];
 
   String get _defaultAutoSaveDirectory {
     final userProfile = Platform.environment['USERPROFILE'];
@@ -300,6 +392,21 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     unawaited(_initAndroidFallbackDirectory());
     unawaited(_restoreWindowSettings());
     unawaited(_loadReceiveHistory());
+    unawaited(_initialize());
+  }
+
+  /// Loads persisted conversations BEFORE wiring discovery/message listeners,
+  /// so restored chat history can't be clobbered by a fresh device discovery
+  /// or an inbound message racing the load.
+  Future<void> _initialize() async {
+    // Pin a stable device identity before announcing, so this device is not
+    // seen as a brand-new peer (and duplicated in peers' lists) on every launch.
+    await _discoveryService.identity.restorePersistentFingerprint();
+    // Resolve the platform device name / persisted custom alias before
+    // announcing, so peers see the right name.
+    await _discoveryService.identity.restoreIdentity();
+    await _loadConversations();
+    if (!mounted) return;
     if (widget.enableDiscovery) {
       // Android drops inbound multicast unless a MulticastLock is held.
       unawaited(AndroidPlatform.acquireMulticastLock());
@@ -309,8 +416,51 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       );
       unawaited(_startDiscovery());
     } else {
-      _scanStatus = '测试模式未启动局域网发现';
+      setState(() {
+        _scanStatus = '测试模式未启动局域网发现';
+      });
     }
+  }
+
+  /// Restores persisted device conversations into [_deviceConversations].
+  Future<void> _loadConversations() async {
+    final stored = await _conversationStore.load();
+    if (stored.isEmpty || !mounted) return;
+    setState(() {
+      stored.forEach((fingerprint, json) {
+        // putIfAbsent guards against a conversation already created in-memory
+        // (e.g. an inbound message that arrived before this completed).
+        _deviceConversations.putIfAbsent(
+          fingerprint,
+          () => Conversation.fromJson(json),
+        );
+      });
+    });
+  }
+
+  /// Persists the current device conversations. Called after every mutation
+  /// that changes chat history, device presence, or conversation metadata.
+  ///
+  /// Writes are chained on [_saveChain] so two near-simultaneous mutations
+  /// cannot race in SharedPreferences and persist an out-of-date snapshot last.
+  /// Each run reads the latest in-memory state at execution time, so the final
+  /// write always reflects the newest data.
+  Future<void> _saveConversations() {
+    final next = _saveChain.then((_) => _persistConversations());
+    // Swallow errors on the chain so one failed write doesn't wedge the rest.
+    _saveChain = next.catchError((_) {});
+    return next;
+  }
+
+  Future<void> _persistConversations() async {
+    final encoded = <String, Map<String, dynamic>>{};
+    _deviceConversations.forEach((fingerprint, conversation) {
+      // Skip discovery-only placeholders: a device merely seen on the LAN but
+      // never messaged should not become a permanent on-disk conversation.
+      if (conversation.ephemeral) return;
+      encoded[fingerprint] = conversation.toJson();
+    });
+    await _conversationStore.persist(encoded);
   }
 
   @override
@@ -555,6 +705,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
   void _upsertDevice(DiscoveredDevice device) {
     if (!mounted) return;
+    // The user deleted this conversation this session; ignore its discovery
+    // re-announces so it does not silently come back. A fresh inbound message
+    // clears the dismissal (see _handleIncomingMessage).
+    if (_dismissedFingerprints.contains(device.fingerprint)) return;
+    // The conversation list is re-sorted by lastSeen on every announce, so a
+    // bare positional _selected would silently jump to a different peer when
+    // any other device re-announces. Pin the selection to its stable key and
+    // recompute the index after the list order changes.
+    final selectedKey = _selectionKeyAt(_selected);
     setState(() {
       _devices[device.fingerprint] = device;
       _deviceConversations.putIfAbsent(
@@ -562,10 +721,43 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         () => _deviceConversation(device),
       );
       _scanStatus = '已发现 ${_devices.length} 台设备';
-      if (_selected >= _visibleConversations.length) {
+      _selected = _indexForSelectionKey(selectedKey);
+      if (_selected < 0 || _selected >= _visibleConversations.length) {
         _selected = 0;
       }
     });
+    unawaited(_saveConversations());
+  }
+
+  /// A stable identifier for the conversation currently shown at [index],
+  /// independent of the list's sort order. Network conversations are keyed by
+  /// device fingerprint; static ones by their offset into [_conversations].
+  String? _selectionKeyAt(int index) {
+    if (index < 0) return null;
+    final networkCount = _networkConversationCount;
+    if (index < networkCount) {
+      final keys = _networkConversationKeys;
+      return index < keys.length ? 'net:${keys[index]}' : null;
+    }
+    final staticIndex = index - networkCount;
+    return staticIndex < _conversations.length ? 'static:$staticIndex' : null;
+  }
+
+  /// Resolves a key from [_selectionKeyAt] back to a list index against the
+  /// current ordering. Returns 0 if the keyed conversation no longer exists.
+  int _indexForSelectionKey(String? key) {
+    if (key == null) return _selected;
+    if (key.startsWith('net:')) {
+      final fingerprint = key.substring(4);
+      final position = _networkConversationKeys.indexOf(fingerprint);
+      if (position >= 0) return position;
+    } else if (key.startsWith('static:')) {
+      final staticIndex = int.tryParse(key.substring(7));
+      if (staticIndex != null && staticIndex < _conversations.length) {
+        return _networkConversationCount + staticIndex;
+      }
+    }
+    return 0;
   }
 
   List<Conversation> get _visibleConversations {
@@ -624,6 +816,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       ],
       files: [],
       device: device,
+      ephemeral: true,
     );
   }
 
@@ -645,6 +838,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     );
 
     setState(() {
+      // A new inbound message un-deletes a previously dismissed conversation.
+      _dismissedFingerprints.remove(fingerprint);
       _deviceConversations[fingerprint] =
           (_deviceConversations[fingerprint] ??
                   Conversation(
@@ -665,6 +860,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 unread: _selectedConversationFingerprint == fingerprint ? 0 : 1,
               );
     });
+    unawaited(_saveConversations());
     _scrollToBottom();
   }
 
@@ -930,6 +1126,26 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     );
   }
 
+  /// The status a freshly-composed outgoing message should start in.
+  ///
+  /// - A local conversation with no associated device (static helper chats, or
+  ///   persisted conversations whose `device` is null) has nothing to transmit
+  ///   over the network: the message is immediately [MessageSendStatus.sent].
+  /// - A real peer conversation (has an associated device) that is currently
+  ///   offline cannot receive the message, so it starts
+  ///   [MessageSendStatus.failed] rather than falsely reporting "sent" (the
+  ///   previous behavior silently dropped it).
+  /// - An online peer starts [MessageSendStatus.sending] while the transfer
+  ///   runs.
+  MessageSendStatus _outgoingInitialStatus() {
+    final fingerprint = _selectedConversationFingerprint;
+    if (fingerprint == null) return MessageSendStatus.sent;
+    if (_devices[fingerprint] != null) return MessageSendStatus.sending;
+    final conversation = _deviceConversations[fingerprint];
+    return conversation?.device != null
+        ? MessageSendStatus.failed
+        : MessageSendStatus.sent;
+  }
 
   void _sendMessage() {
     final text = _controller.text.trim();
@@ -939,9 +1155,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       final message = ChatMessage(
         text,
         isMe: true,
-        status: _selectedDevice == null
-            ? MessageSendStatus.sent
-            : MessageSendStatus.sending,
+        status: _outgoingInitialStatus(),
       );
       _appendOutgoingMessage(message, subtitle: text);
       unawaited(_sendNetworkMessage(message));
@@ -954,9 +1168,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         '',
         isMe: true,
         attachment: attachment,
-        status: _selectedDevice == null
-            ? MessageSendStatus.sent
-            : MessageSendStatus.sending,
+        status: _outgoingInitialStatus(),
       );
       attachmentMessages.add(message);
       _appendOutgoingMessage(message, subtitle: _messageSubtitle(message));
@@ -1031,80 +1243,80 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _showManualConnectDialog() async {
-    final ipController = TextEditingController();
-    final portController = TextEditingController(
-      text: LocalSendIdentity.defaultPort.toString(),
+    // Pre-fill the local /24 prefix so the user only types the last octet —
+    // the peer is on the same LAN, so the first three octets match ours.
+    final prefix = await _localSubnetPrefix();
+    if (!mounted) return;
+
+    // The dialog owns its text controllers (see _ManualConnectDialog) so they
+    // are disposed when its subtree unmounts — after the close animation — not
+    // the instant showDialog returns. Disposing them here in a `finally` raced
+    // the exit transition and crashed with "TextEditingController used after
+    // being disposed" when the dialog was dismissed.
+    final result = await showDialog<_ManualConnectInput>(
+      context: context,
+      builder: (context) => _ManualConnectDialog(
+        initialIp: prefix,
+        initialPort: LocalSendIdentity.defaultPort.toString(),
+        onInvalid: () => _showToast('请输入有效的 IP 地址和端口号'),
+      ),
     );
-    final localEndpoints = _loadLocalConnectEndpoints();
 
+    if (result == null || !mounted) return;
+    await _connectManualDevice(result.host, result.port);
+  }
+
+  /// Returns the local IPv4 /24 prefix (e.g. "192.168.1.") for pre-filling the
+  /// manual-connect field, or an empty string if it can't be determined.
+  Future<String> _localSubnetPrefix() async {
+    if (!widget.enableDiscovery) return '';
     try {
-      final result = await showDialog<_ManualConnectInput>(
-        context: context,
-        builder: (context) {
-          return TeaDialog(
-            title: const Text('手动连接'),
-            icon: Icons.add_link_rounded,
-            width: 420,
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: ipController,
-                  autofocus: true,
-                  decoration: teaInputDecoration(
-                    labelText: '对方 IP 地址',
-                    hintText: '例如 192.168.1.20',
-                  ),
-                  textInputAction: TextInputAction.next,
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: portController,
-                  decoration: teaInputDecoration(
-                    labelText: '端口号',
-                    hintText: '默认 53317',
-                  ),
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onSubmitted: (_) => _submitManualConnectDialog(
-                    context,
-                    ipController,
-                    portController,
-                  ),
-                ),
-                const SizedBox(height: 18),
-                _LocalConnectInfo(
-                  endpoints: localEndpoints,
-                  onCopy: _copyLocalConnectEndpoint,
-                ),
-              ],
-            ),
-            actions: [
-              TeaDialogButton(
-                onPressed: () => Navigator.of(context).pop(),
-                label: '取消',
-              ),
-              TeaDialogButton(
-                onPressed: () => _submitManualConnectDialog(
-                  context,
-                  ipController,
-                  portController,
-                ),
-                label: '连接',
-                filled: true,
-              ),
-            ],
-          );
-        },
-      );
-
-      if (result == null || !mounted) return;
-      await _connectManualDevice(result.host, result.port);
-    } finally {
-      ipController.dispose();
-      portController.dispose();
+      final endpoints = await _discoveryService.localConnectEndpoints();
+      if (endpoints.isEmpty) return '';
+      final host = endpoints.first.split(':').first;
+      final parts = host.split('.');
+      if (parts.length == 4 &&
+          parts.every((part) => int.tryParse(part) != null)) {
+        return '${parts[0]}.${parts[1]}.${parts[2]}.';
+      }
+    } catch (_) {
+      // Fall through to the empty prefix; the field just starts blank.
     }
+    return '';
+  }
+
+  /// Shows this device's info and lets the user rename it. The chosen name is
+  /// the alias broadcast to peers (what they see in their device list).
+  Future<void> _showDeviceInfoDialog() async {
+    final identity = _discoveryService.identity;
+    final endpoints = await _loadLocalConnectEndpoints();
+    if (!mounted) return;
+    final endpoint = endpoints.isNotEmpty
+        ? endpoints.first
+        : '本机端口 ${_discoveryService.boundPort}';
+
+    final newAlias = await showDialog<String>(
+      context: context,
+      builder: (context) => _DeviceInfoDialog(
+        initialAlias: identity.alias,
+        deviceTypeLabel: identity.deviceType == 'mobile' ? '移动设备' : '桌面设备',
+        deviceModel: identity.deviceModel,
+        endpoint: endpoint,
+        fingerprint: identity.fingerprint,
+      ),
+    );
+
+    if (newAlias == null || newAlias.isEmpty || !mounted) return;
+    if (newAlias == identity.alias) return;
+    await identity.updateAlias(newAlias);
+    if (!mounted) return;
+    // Refresh the avatar/name display, and re-announce so peers pick up the
+    // new name.
+    setState(() {});
+    if (widget.enableDiscovery) {
+      unawaited(_discoveryService.announce());
+    }
+    _showToast('已更新设备名称为 $newAlias');
   }
 
   Future<void> _showConnectionQrDialog() async {
@@ -1187,28 +1399,6 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       // The dialog can still show the known default port if adapters fail.
     }
     return ['本机端口 ${_discoveryService.boundPort}，未找到局域网 IP'];
-  }
-
-  Future<void> _copyLocalConnectEndpoint(String endpoint) async {
-    final value = endpoint.contains('未找到') ? endpoint : endpoint.trim();
-    await Clipboard.setData(ClipboardData(text: value));
-    if (!mounted) return;
-    _showToast('已复制：$value');
-  }
-
-  void _submitManualConnectDialog(
-    BuildContext context,
-    TextEditingController ipController,
-    TextEditingController portController,
-  ) {
-    final host = ipController.text.trim();
-    final port = int.tryParse(portController.text.trim());
-    if (host.isEmpty || port == null || port < 1 || port > 65535) {
-      _showToast('请输入有效的 IP 地址和端口号');
-      return;
-    }
-
-    Navigator.of(context).pop(_ManualConnectInput(host: host, port: port));
   }
 
   Future<void> _connectManualDevice(String host, int port) async {
@@ -1300,10 +1490,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         target: target,
         path: attachment.path,
         handle: handle,
-        onProgress: (sent, total) => _updateMessageProgress(
-          message.id,
-          total == 0 ? 0 : sent / total,
-        ),
+        onProgress: (sent, total) =>
+            _updateMessageProgress(message.id, total == 0 ? 0 : sent / total),
       );
       _updateMessageStatus(message.id, MessageSendStatus.sent);
     } on TransferCancelledException {
@@ -1397,6 +1585,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         );
       }
     });
+    unawaited(_saveConversations());
   }
 
   void _updateMessageProgress(String messageId, double progress) {
@@ -1478,6 +1667,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _messageSelectionMode = false;
       _selectedMessageIds.clear();
     });
+    unawaited(_saveConversations());
   }
 
   Future<void> _showConversationMenu(int index, Offset position) async {
@@ -1523,45 +1713,27 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     }
   }
 
-  Future<void> _renameConversation(int index) async {
+  Future<void> _renameConversation(
+    int index, {
+    String dialogTitle = '重命名',
+    String hintText = '输入会话名称',
+  }) async {
     final conversation = _visibleConversations[index];
-    final controller = TextEditingController(text: conversation.title);
-    try {
-      final title = await showDialog<String>(
-        context: context,
-        builder: (context) {
-          return TeaDialog(
-            title: const Text('重命名'),
-            icon: Icons.edit_rounded,
-            width: 360,
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: teaInputDecoration(hintText: '输入会话名称'),
-              onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
-            ),
-            actions: [
-              TeaDialogButton(
-                onPressed: () => Navigator.of(context).pop(),
-                label: '取消',
-              ),
-              TeaDialogButton(
-                onPressed: () =>
-                    Navigator.of(context).pop(controller.text.trim()),
-                label: '确定',
-                filled: true,
-              ),
-            ],
-          );
-        },
-      );
-      if (title == null || title.isEmpty || !mounted) return;
-      _updateConversationAt(index, (conversation) {
-        return conversation.copyWith(title: title, initials: title.initials);
-      });
-    } finally {
-      controller.dispose();
-    }
+    final title = await showDialog<String>(
+      context: context,
+      builder: (context) => _TextPromptDialog(
+        title: dialogTitle,
+        hintText: hintText,
+        initialValue: conversation.title,
+        confirmLabel: '确定',
+        icon: Icons.edit_rounded,
+        width: 360,
+      ),
+    );
+    if (title == null || title.isEmpty || !mounted) return;
+    _updateConversationAt(index, (conversation) {
+      return conversation.copyWith(title: title, initials: title.initials);
+    });
   }
 
   void _clearConversation(int index) {
@@ -1581,15 +1753,21 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         final fingerprint = _networkConversationKeys[index];
         _devices.remove(fingerprint);
         _deviceConversations.remove(fingerprint);
+        _dismissedFingerprints.add(fingerprint);
       } else {
         final conversationIndex = index - _networkConversationCount;
         _conversations.removeAt(conversationIndex);
       }
-      _selected = _selected.clamp(0, _visibleConversations.length - 1).toInt();
+      // Guard the empty case: clamp throws when upperLimit < lowerLimit, which
+      // happens when the last conversation is removed (length - 1 == -1).
+      final maxIndex = _visibleConversations.length - 1;
+      _selected = maxIndex < 0 ? 0 : _selected.clamp(0, maxIndex).toInt();
+      _mobileChatOpen = false;
       _messageSelectionMode = false;
       _showDeviceDetails = false;
       _selectedMessageIds.clear();
     });
+    unawaited(_saveConversations());
   }
 
   void _updateConversationAt(
@@ -1610,6 +1788,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         );
       }
     });
+    unawaited(_saveConversations());
   }
 
   void _showChatsSection() {
@@ -1700,6 +1879,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _conversations[conversationIndex] = _conversations[conversationIndex]
           .copyWith(subtitle: subtitle, time: '刚刚', unread: 0);
     });
+    unawaited(_saveConversations());
     _scrollToBottom();
   }
 
@@ -1715,8 +1895,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       final existing = _deviceConversations[fingerprint];
       final device = _devices[fingerprint];
       final base =
-          existing ??
-          (device != null ? _deviceConversation(device) : null);
+          existing ?? (device != null ? _deviceConversation(device) : null);
       if (base == null) return;
       _deviceConversations[fingerprint] = base.appendMessage(
         message,
@@ -1724,6 +1903,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         unread: _selectedConversationFingerprint == fingerprint ? 0 : 1,
       );
     });
+    unawaited(_saveConversations());
     _scrollToBottom();
   }
 
@@ -1817,10 +1997,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         target: device,
         path: path,
         handle: handle,
-        onProgress: (sent, total) => _updateMessageProgress(
-          message.id,
-          total == 0 ? 0 : sent / total,
-        ),
+        onProgress: (sent, total) =>
+            _updateMessageProgress(message.id, total == 0 ? 0 : sent / total),
       );
       _updateMessageStatus(message.id, MessageSendStatus.sent);
     } on TransferCancelledException {
@@ -1853,6 +2031,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _conversations[conversationIndex] = _conversations[conversationIndex]
           .copyWith(subtitle: text, time: '刚刚', unread: 0);
     });
+    unawaited(_saveConversations());
     _scrollToBottom();
   }
 
@@ -1900,11 +2079,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final conversationWidth = wide
         ? 320.0
         : hasRail
-        ? width - 76
+        ? width - 112
         : width;
     final conversations = _visibleConversations;
-    final safeSelected = _selected.clamp(0, conversations.length - 1).toInt();
-    final selected = conversations[safeSelected];
+    final hasConversations = conversations.isNotEmpty;
+    final safeSelected = hasConversations
+        ? _selected.clamp(0, conversations.length - 1).toInt()
+        : 0;
+    final selected = hasConversations ? conversations[safeSelected] : null;
     final showChatPage = wide || _mobileChatOpen;
 
     return Scaffold(
@@ -1913,6 +2095,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       drawer: showDrawer
           ? _NavDrawer(
               activeSection: _activeSection,
+              deviceAlias: _discoveryService.identity.alias,
+              onShowDeviceInfo: _showDeviceInfoDialog,
               onChats: _showChatsSection,
               onTheme: _showThemeSection,
               onSettings: _showSettingsSection,
@@ -1921,141 +2105,177 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
           : null,
       body: SafeArea(
         child: ColoredBox(
-          color: _surface,
+          color: _panel,
           child: Row(
             children: [
               if (hasRail)
                 _Sidebar(
                   activeSection: _activeSection,
+                  deviceAlias: _discoveryService.identity.alias,
+                  onShowDeviceInfo: _showDeviceInfoDialog,
                   onChats: _showChatsSection,
                   onTheme: _showThemeSection,
                   onSettings: _showSettingsSection,
                   onHistory: _showHistorySection,
                 ),
               if (_activeSection == _MainSection.theme)
-              Expanded(
-                child: ThemePage(
-                  themeMode: _themeMode,
-                  themeColor: _themeColor,
-                  onThemeModeChanged: _setThemeMode,
-                  onThemeColorChanged: _setThemeColor,
-                  onMenu: showDrawer ? _openNavDrawer : null,
-                ),
-              )
-            else if (_activeSection == _MainSection.history)
-              Expanded(
-                child: HistoryPage(
-                  entries: _receiveHistory,
-                  onOpenFile: _openHistoryFile,
-                  onOpenFolder: _openHistoryFolder,
-                  onDelete: _deleteHistoryEntry,
-                  onClear: _clearReceiveHistory,
-                  onMenu: showDrawer ? _openNavDrawer : null,
-                ),
-              )
-            else if (_activeSection == _MainSection.settings)
-              Expanded(
-                child: SettingsPage(
-                  autoSaveEnabled: _autoSaveEnabled,
-                  autoSaveDirectory: _autoSaveDirectory,
-                  overwriteSameNameFiles: _overwriteSameNameFiles,
-                  minimizeToTrayEnabled: _minimizeToTrayEnabled,
-                  restoringWindowSettings: _restoringSettings,
-                  onAutoSaveChanged: (value) => setState(() {
-                    _autoSaveEnabled = value;
-                  }),
-                  onOverwriteSameNameFilesChanged: _setOverwriteSameNameFiles,
-                  onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
-                  onChooseDirectory: _chooseAutoSaveDirectory,
-                  onMenu: showDrawer ? _openNavDrawer : null,
-                ),
-              )
-            else ...[
-              // Phone with chat open: hide the list and show the chat full-width.
-              if (!(_mobileChatOpen && !wide))
-                SizedBox(
-                  width: conversationWidth,
-                  child: ConversationPanel(
-                    conversations: conversations,
-                    isScanning: _isScanning,
-                    scanStatus: _scanStatus,
-                    selected: _selected,
-                    onRefresh: _refreshDevices,
-                    onShowQrCode: _showConnectionQrDialog,
-                    onManualConnect: _showManualConnectDialog,
-                    onContextMenu: _showConversationMenu,
-                    onMenu: showDrawer ? _openNavDrawer : null,
-                    onSelect: (index) => setState(() {
-                      _selected = index;
-                      _pendingAttachments.clear();
-                      _messageSelectionMode = false;
-                      _showDeviceDetails = false;
-                      _previewImage = null;
-                      _selectedMessageIds.clear();
-                      if (!wide) _mobileChatOpen = true;
-                      if (index >= _networkConversationCount) {
-                        final conversationIndex =
-                            index - _networkConversationCount;
-                        _conversations[conversationIndex] =
-                            _conversations[conversationIndex].copyWith(
-                              unread: 0,
-                            );
-                      }
-                    }),
-                  ),
-                ),
-              if (showChatPage)
                 Expanded(
-                  child: PopScope(
-                    canPop: wide || !_mobileChatOpen,
-                    onPopInvokedWithResult: (didPop, _) {
-                      if (!didPop && !wide && _mobileChatOpen) {
-                        setState(() => _mobileChatOpen = false);
-                      }
-                    },
-                    child: ChatPanel(
-                      conversation: selected,
-                      controller: _controller,
-                      scrollController: _scrollController,
-                      pendingAttachments: _pendingAttachments,
-                      onSend: _sendMessage,
-                      onSendImage: _sendImage,
-                      onSendFile: _sendFile,
-                      onPasteImages: _handlePaste,
-                      onRemovePendingAttachment: _removePendingAttachment,
-                      selectionMode: _messageSelectionMode,
-                      showDetails: _showDeviceDetails,
-                      selectedMessageIds: _selectedMessageIds,
-                      onEnterSelectionMode: _enterMessageSelectionMode,
-                      onExitSelectionMode: _exitMessageSelectionMode,
-                      onShowDetails: _showConversationDetails,
-                      onHideDetails: _hideConversationDetails,
-                      onToggleMessageSelection: _toggleMessageSelection,
-                      onDeleteSelectedMessages: _deleteSelectedMessages,
-                      onToggleSelectAllMessages: _toggleSelectAllMessages,
-                      onRetrySendAttachment: _retrySendAttachment,
-                      onCancelTransfer: _cancelTransfer,
-                      onCopyAttachment: _copyAttachmentPath,
-                      previewImage: _previewImage,
-                      onPreviewImage: _openImagePreview,
-                      onClosePreview: _closeImagePreview,
-                      clipboardAutoSendEnabled: _clipboardAutoSendFingerprints
-                          .contains(_selectedConversationFingerprint),
-                      onClipboardAutoSendChanged: (value) {
-                        final fingerprint = _selectedConversationFingerprint;
-                        if (fingerprint != null) {
-                          _setClipboardAutoSendEnabled(fingerprint, value);
-                        }
+                  child: ThemePage(
+                    themeMode: _themeMode,
+                    themeColor: _themeColor,
+                    onThemeModeChanged: _setThemeMode,
+                    onThemeColorChanged: _setThemeColor,
+                    onMenu: showDrawer ? _openNavDrawer : null,
+                  ),
+                )
+              else if (_activeSection == _MainSection.history)
+                Expanded(
+                  child: HistoryPage(
+                    entries: _receiveHistory,
+                    onOpenFile: _openHistoryFile,
+                    onOpenFolder: _openHistoryFolder,
+                    onDelete: _deleteHistoryEntry,
+                    onClear: _clearReceiveHistory,
+                    onMenu: showDrawer ? _openNavDrawer : null,
+                  ),
+                )
+              else if (_activeSection == _MainSection.settings)
+                Expanded(
+                  child: SettingsPage(
+                    autoSaveEnabled: _autoSaveEnabled,
+                    autoSaveDirectory: _autoSaveDirectory,
+                    overwriteSameNameFiles: _overwriteSameNameFiles,
+                    minimizeToTrayEnabled: _minimizeToTrayEnabled,
+                    restoringWindowSettings: _restoringSettings,
+                    onAutoSaveChanged: (value) => setState(() {
+                      _autoSaveEnabled = value;
+                    }),
+                    onOverwriteSameNameFilesChanged: _setOverwriteSameNameFiles,
+                    onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
+                    onChooseDirectory: _chooseAutoSaveDirectory,
+                    onMenu: showDrawer ? _openNavDrawer : null,
+                  ),
+                )
+              else ...[
+                // Phone with chat open: hide the list and show the chat full-width.
+                if (!(_mobileChatOpen && !wide))
+                  SizedBox(
+                    width: conversationWidth,
+                    child: ConversationPanel(
+                      conversations: conversations,
+                      isScanning: _isScanning,
+                      scanStatus: _scanStatus,
+                      selected: _selected,
+                      onRefresh: _refreshDevices,
+                      onShowQrCode: _showConnectionQrDialog,
+                      onManualConnect: _showManualConnectDialog,
+                      onContextMenu: _showConversationMenu,
+                      onMenu: showDrawer ? _openNavDrawer : null,
+                      onEditRemark: (index) => _renameConversation(
+                        index,
+                        dialogTitle: '编辑备注',
+                        hintText: '输入备注名称',
+                      ),
+                      onClearRecords: _clearConversation,
+                      onDeleteConversation: _deleteConversation,
+                      onSelect: (index) {
+                        setState(() {
+                          _selected = index;
+                          _pendingAttachments.clear();
+                          _messageSelectionMode = false;
+                          _showDeviceDetails = false;
+                          _previewImage = null;
+                          _selectedMessageIds.clear();
+                          if (!wide) _mobileChatOpen = true;
+                          if (index < _networkConversationCount) {
+                            final fingerprint = _networkConversationKeys[index];
+                            final conversation =
+                                _deviceConversations[fingerprint];
+                            if (conversation != null && conversation.unread != 0) {
+                              _deviceConversations[fingerprint] =
+                                  conversation.copyWith(unread: 0);
+                            }
+                          } else {
+                            final conversationIndex =
+                                index - _networkConversationCount;
+                            _conversations[conversationIndex] =
+                                _conversations[conversationIndex].copyWith(
+                                  unread: 0,
+                                );
+                          }
+                        });
+                        unawaited(_saveConversations());
                       },
-                      onMobileBack: (!wide && _mobileChatOpen)
-                          ? () => setState(() => _mobileChatOpen = false)
-                          : null,
                     ),
                   ),
-                ),
+                if (showChatPage)
+                  Expanded(
+                    child: selected == null
+                        ? Center(
+                            child: Text(
+                              '暂无会话，等待局域网设备…',
+                              style: TextStyle(color: _muted, fontSize: 14),
+                            ),
+                          )
+                        : PopScope(
+                            canPop: wide || !_mobileChatOpen,
+                            onPopInvokedWithResult: (didPop, _) {
+                              if (!didPop && !wide && _mobileChatOpen) {
+                                setState(() => _mobileChatOpen = false);
+                              }
+                            },
+                            child: ChatPanel(
+                              conversation: selected,
+                              controller: _controller,
+                              scrollController: _scrollController,
+                              pendingAttachments: _pendingAttachments,
+                              onSend: _sendMessage,
+                              onSendImage: _sendImage,
+                              onSendFile: _sendFile,
+                              onPasteImages: _handlePaste,
+                              onRemovePendingAttachment:
+                                  _removePendingAttachment,
+                              selectionMode: _messageSelectionMode,
+                              showDetails: _showDeviceDetails,
+                              selectedMessageIds: _selectedMessageIds,
+                              onEnterSelectionMode: _enterMessageSelectionMode,
+                              onExitSelectionMode: _exitMessageSelectionMode,
+                              onShowDetails: _showConversationDetails,
+                              onHideDetails: _hideConversationDetails,
+                              onToggleMessageSelection: _toggleMessageSelection,
+                              onDeleteSelectedMessages: _deleteSelectedMessages,
+                              onToggleSelectAllMessages:
+                                  _toggleSelectAllMessages,
+                              onRetrySendAttachment: _retrySendAttachment,
+                              onCancelTransfer: _cancelTransfer,
+                              onCopyAttachment: _copyAttachmentPath,
+                              previewImage: _previewImage,
+                              onPreviewImage: _openImagePreview,
+                              onClosePreview: _closeImagePreview,
+                              clipboardAutoSendEnabled:
+                                  _clipboardAutoSendFingerprints.contains(
+                                    _selectedConversationFingerprint,
+                                  ),
+                              onClipboardAutoSendChanged: (value) {
+                                final fingerprint =
+                                    _selectedConversationFingerprint;
+                                if (fingerprint != null) {
+                                  _setClipboardAutoSendEnabled(
+                                    fingerprint,
+                                    value,
+                                  );
+                                }
+                              },
+                              onMobileBack: (!wide && _mobileChatOpen)
+                                  ? () =>
+                                        setState(() => _mobileChatOpen = false)
+                                  : null,
+                            ),
+                          ),
+                  ),
+              ],
             ],
-          ],
-        ),
+          ),
         ),
       ),
     );
@@ -2065,6 +2285,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 class _Sidebar extends StatelessWidget {
   const _Sidebar({
     required this.activeSection,
+    required this.deviceAlias,
+    required this.onShowDeviceInfo,
     required this.onChats,
     required this.onTheme,
     required this.onSettings,
@@ -2072,6 +2294,8 @@ class _Sidebar extends StatelessWidget {
   });
 
   final _MainSection activeSection;
+  final String deviceAlias;
+  final VoidCallback onShowDeviceInfo;
   final VoidCallback onChats;
   final VoidCallback onTheme;
   final VoidCallback onSettings;
@@ -2080,19 +2304,38 @@ class _Sidebar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 76,
-      color: _sidebar,
-      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 10),
+      width: 88,
+      margin: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+      decoration: BoxDecoration(
+        color: _sidebar,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F0F172A),
+            blurRadius: 24,
+            offset: Offset(0, 12),
+          ),
+        ],
+      ),
       child: Column(
         children: [
-          CircleAvatar(
-            radius: 21,
-            backgroundColor: _accent,
-            child: const Text(
-              'T',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
+          Tooltip(
+            message: '本设备信息',
+            child: InkWell(
+              onTap: onShowDeviceInfo,
+              customBorder: const CircleBorder(),
+              child: CircleAvatar(
+                radius: 23,
+                backgroundColor: _accent,
+                child: Text(
+                  deviceAlias.initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ),
             ),
           ),
@@ -2135,6 +2378,8 @@ class _Sidebar extends StatelessWidget {
 class _NavDrawer extends StatelessWidget {
   const _NavDrawer({
     required this.activeSection,
+    required this.deviceAlias,
+    required this.onShowDeviceInfo,
     required this.onChats,
     required this.onTheme,
     required this.onSettings,
@@ -2142,6 +2387,8 @@ class _NavDrawer extends StatelessWidget {
   });
 
   final _MainSection activeSection;
+  final String deviceAlias;
+  final VoidCallback onShowDeviceInfo;
   final VoidCallback onChats;
   final VoidCallback onTheme;
   final VoidCallback onSettings;
@@ -2155,31 +2402,41 @@ class _NavDrawer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: _accent,
-                    child: const Text(
-                      'T',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
+            InkWell(
+              onTap: () {
+                Navigator.of(context).pop();
+                onShowDeviceInfo();
+              },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundColor: _accent,
+                      child: Text(
+                        deviceAlias.initials,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    'NearSend',
-                    style: TextStyle(
-                      color: _text,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        deviceAlias,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _text,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                    Icon(Icons.chevron_right_rounded, color: _muted),
+                  ],
+                ),
               ),
             ),
             Divider(height: 1, color: _line),
@@ -2255,6 +2512,41 @@ enum _MainSection { chats, theme, settings, history }
 
 enum _ConversationMenuAction { rename, clear, delete }
 
+/// A label/value row used in the device-info dialog.
+class _DeviceInfoRow extends StatelessWidget {
+  const _DeviceInfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(label, style: TextStyle(color: _muted, fontSize: 13)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: TextStyle(
+                color: _text,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Result of the delete/clear confirmation dialog.
 class _HistoryRemoval {
   const _HistoryRemoval({required this.alsoDeleteFile});
@@ -2304,81 +2596,48 @@ class TeaDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      child: ConstrainedBox(
+    return Material(
+      color: Colors.transparent,
+      child: ShadDialog(
         constraints: BoxConstraints(maxWidth: width),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: _surface,
-            border: Border.all(color: _line),
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x2431302D),
-                blurRadius: 28,
-                offset: Offset(0, 16),
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        radius: BorderRadius.circular(8),
+        backgroundColor: _surface,
+        border: Border.all(color: _line),
+        shadows: const [
+          BoxShadow(
+            color: Color(0x2431302D),
+            blurRadius: 28,
+            offset: Offset(0, 16),
+          ),
+        ],
+        title: Row(
+          children: [
+            if (icon != null) ...[
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: _accentSoft,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: _accent, size: 19),
               ),
+              const SizedBox(width: 12),
             ],
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 14, 14),
-                  child: Row(
-                    children: [
-                      if (icon != null) ...[
-                        Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: _accentSoft,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(icon, color: _accent, size: 19),
-                        ),
-                        const SizedBox(width: 12),
-                      ],
-                      Expanded(
-                        child: DefaultTextStyle(
-                          style: TextStyle(
-                            color: _text,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800,
-                          ),
-                          child: title,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(height: 1, color: _line),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-                  child: content,
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      for (final action in actions) ...[
-                        action,
-                        if (action != actions.last) const SizedBox(width: 8),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+            Expanded(child: title),
+          ],
         ),
+        titleStyle: TextStyle(
+          color: _text,
+          fontSize: 17,
+          fontWeight: FontWeight.w800,
+        ),
+        actions: actions,
+        actionsGap: 8,
+        actionsMainAxisAlignment: MainAxisAlignment.end,
+        expandActionsWhenTiny: false,
+        child: content,
       ),
     );
   }
@@ -2398,26 +2657,29 @@ class TeaDialogButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = filled
-        ? FilledButton.styleFrom(
-            backgroundColor: _accent,
-            foregroundColor: Colors.white,
-            minimumSize: const Size(76, 38),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          )
-        : TextButton.styleFrom(
-            foregroundColor: _muted,
-            minimumSize: const Size(76, 38),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          );
-
     return filled
-        ? FilledButton(onPressed: onPressed, style: style, child: Text(label))
-        : TextButton(onPressed: onPressed, style: style, child: Text(label));
+        ? ShadButton(
+            onPressed: onPressed,
+            width: 76,
+            height: 38,
+            backgroundColor: _accent,
+            hoverBackgroundColor: Color.alphaBlend(
+              Colors.black.withValues(alpha: 0.08),
+              _accent,
+            ),
+            foregroundColor: Colors.white,
+            hoverForegroundColor: Colors.white,
+            child: Text(label),
+          )
+        : ShadButton.ghost(
+            onPressed: onPressed,
+            width: 76,
+            height: 38,
+            foregroundColor: _muted,
+            hoverForegroundColor: _text,
+            hoverBackgroundColor: _accentSoft,
+            child: Text(label),
+          );
   }
 }
 
@@ -2452,111 +2714,235 @@ class _ManualConnectInput {
   final int port;
 }
 
-class _LocalConnectInfo extends StatelessWidget {
-  const _LocalConnectInfo({required this.endpoints, required this.onCopy});
+/// Single text-field prompt dialog (rename / remark). Owns its controller so it
+/// is disposed when the dialog subtree unmounts — see [_ManualConnectDialog].
+class _TextPromptDialog extends StatefulWidget {
+  const _TextPromptDialog({
+    required this.title,
+    required this.initialValue,
+    required this.confirmLabel,
+    this.hintText,
+    this.icon = Icons.edit_rounded,
+    this.width = 360,
+  });
 
-  final Future<List<String>> endpoints;
-  final ValueChanged<String> onCopy;
+  final String title;
+  final String initialValue;
+  final String confirmLabel;
+  final String? hintText;
+  final IconData icon;
+  final double width;
+
+  @override
+  State<_TextPromptDialog> createState() => _TextPromptDialogState();
+}
+
+class _TextPromptDialogState extends State<_TextPromptDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8F6F0),
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
+    return TeaDialog(
+      title: Text(widget.title),
+      icon: widget.icon,
+      width: widget.width,
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: teaInputDecoration(hintText: widget.hintText),
+        onSubmitted: (_) => _submit(),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.settings_ethernet_rounded, size: 17, color: _muted),
-                const SizedBox(width: 8),
-                Text(
-                  '允许别人连接本机',
-                  style: TextStyle(
-                    color: _text,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            FutureBuilder<List<String>>(
-              future: endpoints,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done) {
-                  return SizedBox(
-                    height: 32,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _accent,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                final values = snapshot.data ?? const <String>[];
-                if (values.isEmpty) {
-                  return Text(
-                    '未找到可用局域网 IP',
-                    style: TextStyle(color: _muted, fontSize: 12),
-                  );
-                }
-
-                return Column(
-                  children: [
-                    for (final endpoint in values)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: SelectableText(
-                                endpoint,
-                                style: TextStyle(
-                                  color: _text,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            Tooltip(
-                              message: '复制',
-                              child: IconButton(
-                                onPressed: () => onCopy(endpoint),
-                                icon: const Icon(Icons.copy_rounded, size: 16),
-                                color: _muted,
-                                style: IconButton.styleFrom(
-                                  fixedSize: const Size(30, 30),
-                                  minimumSize: const Size(30, 30),
-                                  padding: EdgeInsets.zero,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
+      actions: [
+        TeaDialogButton(
+          onPressed: () => Navigator.of(context).pop(),
+          label: '取消',
         ),
+        TeaDialogButton(
+          onPressed: _submit,
+          label: widget.confirmLabel,
+          filled: true,
+        ),
+      ],
+    );
+  }
+}
+
+/// Local device info + alias rename dialog. Owns its alias controller so it is
+/// disposed with the dialog subtree — see [_ManualConnectDialog].
+class _DeviceInfoDialog extends StatefulWidget {
+  const _DeviceInfoDialog({
+    required this.initialAlias,
+    required this.deviceTypeLabel,
+    required this.deviceModel,
+    required this.endpoint,
+    required this.fingerprint,
+  });
+
+  final String initialAlias;
+  final String deviceTypeLabel;
+  final String deviceModel;
+  final String endpoint;
+  final String fingerprint;
+
+  @override
+  State<_DeviceInfoDialog> createState() => _DeviceInfoDialogState();
+}
+
+class _DeviceInfoDialogState extends State<_DeviceInfoDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialAlias);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return TeaDialog(
+      title: const Text('本设备信息'),
+      icon: Icons.devices_rounded,
+      width: 400,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: teaInputDecoration(
+              labelText: '设备名称',
+              hintText: '其他设备搜索时显示的名称',
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 16),
+          _DeviceInfoRow(label: '设备类型', value: widget.deviceTypeLabel),
+          _DeviceInfoRow(label: '型号', value: widget.deviceModel),
+          _DeviceInfoRow(label: '本机地址', value: widget.endpoint),
+          _DeviceInfoRow(label: '设备指纹', value: widget.fingerprint),
+        ],
       ),
+      actions: [
+        TeaDialogButton(
+          onPressed: () => Navigator.of(context).pop(),
+          label: '取消',
+        ),
+        TeaDialogButton(onPressed: _submit, label: '保存', filled: true),
+      ],
+    );
+  }
+}
+
+/// Manual-connect dialog. Owns its [TextEditingController]s so they live exactly
+/// as long as the dialog's element subtree — disposing them in the caller's
+/// `finally` raced the close animation and crashed with "TextEditingController
+/// used after being disposed" on cancel.
+class _ManualConnectDialog extends StatefulWidget {
+  const _ManualConnectDialog({
+    required this.initialIp,
+    required this.initialPort,
+    required this.onInvalid,
+  });
+
+  final String initialIp;
+  final String initialPort;
+  final VoidCallback onInvalid;
+
+  @override
+  State<_ManualConnectDialog> createState() => _ManualConnectDialogState();
+}
+
+class _ManualConnectDialogState extends State<_ManualConnectDialog> {
+  late final TextEditingController _ipController;
+  late final TextEditingController _portController;
+
+  @override
+  void initState() {
+    super.initState();
+    _ipController = TextEditingController(text: widget.initialIp)
+      ..selection = TextSelection.collapsed(offset: widget.initialIp.length);
+    _portController = TextEditingController(text: widget.initialPort);
+  }
+
+  @override
+  void dispose() {
+    _ipController.dispose();
+    _portController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final host = _ipController.text.trim();
+    final port = int.tryParse(_portController.text.trim());
+    if (host.isEmpty || port == null || port < 1 || port > 65535) {
+      widget.onInvalid();
+      return;
+    }
+    Navigator.of(context).pop(_ManualConnectInput(host: host, port: port));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TeaDialog(
+      title: const Text('手动连接'),
+      icon: Icons.add_link_rounded,
+      width: 420,
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _ipController,
+            autofocus: true,
+            decoration: teaInputDecoration(
+              labelText: '对方 IP 地址',
+              hintText: '例如 192.168.1.20',
+            ),
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _portController,
+            decoration: teaInputDecoration(
+              labelText: '端口号',
+              hintText: '默认 53317',
+            ),
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TeaDialogButton(
+          onPressed: () => Navigator.of(context).pop(),
+          label: '取消',
+        ),
+        TeaDialogButton(onPressed: _submit, label: '连接', filled: true),
+      ],
     );
   }
 }
@@ -2583,15 +2969,14 @@ class _NavIcon extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed ?? () {},
           icon: Icon(icon, size: 21),
-          color: active ? Colors.white : _sidebarMuted,
+          color: active ? _accent : _sidebarMuted,
           style: IconButton.styleFrom(
             fixedSize: const Size(42, 42),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
-            backgroundColor: active
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.transparent,
+            backgroundColor: active ? _accentSoft : Colors.transparent,
+            hoverColor: _accentSoft,
           ),
         ),
       ),
@@ -2668,43 +3053,9 @@ class ThemePage extends StatelessWidget {
                           description: '切换日间或夜间界面',
                         ),
                         const SizedBox(height: 16),
-                        SegmentedButton<AppThemeMode>(
-                          segments: const [
-                            ButtonSegment(
-                              value: AppThemeMode.light,
-                              icon: Icon(Icons.light_mode_rounded, size: 18),
-                              label: Text('日间'),
-                            ),
-                            ButtonSegment(
-                              value: AppThemeMode.dark,
-                              icon: Icon(Icons.dark_mode_rounded, size: 18),
-                              label: Text('夜间'),
-                            ),
-                          ],
-                          selected: {themeMode},
-                          onSelectionChanged: (values) {
-                            onThemeModeChanged(values.first);
-                          },
-                          style: ButtonStyle(
-                            foregroundColor: WidgetStateProperty.resolveWith(
-                              (states) => states.contains(WidgetState.selected)
-                                  ? Colors.white
-                                  : _text,
-                            ),
-                            backgroundColor: WidgetStateProperty.resolveWith(
-                              (states) => states.contains(WidgetState.selected)
-                                  ? _accent
-                                  : _surface,
-                            ),
-                            side: WidgetStateProperty.all(
-                              BorderSide(color: _line),
-                            ),
-                            shape: WidgetStateProperty.all(
-                              RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
-                          ),
+                        _ThemeModePicker(
+                          value: themeMode,
+                          onChanged: onThemeModeChanged,
                         ),
                       ],
                     ),
@@ -2750,6 +3101,63 @@ class ThemePage extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ThemeModePicker extends StatelessWidget {
+  const _ThemeModePicker({required this.value, required this.onChanged});
+
+  final AppThemeMode value;
+  final ValueChanged<AppThemeMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ThemeModeOption(
+          icon: Icons.light_mode_rounded,
+          label: '日间',
+          selected: value == AppThemeMode.light,
+          onPressed: () => onChanged(AppThemeMode.light),
+        ),
+        const SizedBox(width: 8),
+        _ThemeModeOption(
+          icon: Icons.dark_mode_rounded,
+          label: '夜间',
+          selected: value == AppThemeMode.dark,
+          onPressed: () => onChanged(AppThemeMode.dark),
+        ),
+      ],
+    );
+  }
+}
+
+class _ThemeModeOption extends StatelessWidget {
+  const _ThemeModeOption({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadButton.outline(
+      onPressed: onPressed,
+      height: 38,
+      backgroundColor: selected ? _accent : _surface,
+      hoverBackgroundColor: selected ? _accent : _accentSoft,
+      foregroundColor: selected ? Colors.white : _text,
+      hoverForegroundColor: selected ? Colors.white : _text,
+      leading: Icon(icon, size: 18),
+      child: Text(label),
     );
   }
 }
@@ -2954,9 +3362,9 @@ class SettingsPage extends StatelessWidget {
                                 ],
                               ),
                             ),
-                            Switch(
+                            ShadSwitch(
                               value: autoSaveEnabled,
-                              activeThumbColor: _accent,
+                              checkedTrackColor: _accent,
                               onChanged: onAutoSaveChanged,
                             ),
                           ],
@@ -3121,9 +3529,10 @@ class _SettingsSwitchCard extends StatelessWidget {
                 ],
               ),
             ),
-            Switch(
+            ShadSwitch(
               value: value,
-              activeThumbColor: _accent,
+              checkedTrackColor: _accent,
+              enabled: onChanged != null,
               onChanged: onChanged,
             ),
           ],
@@ -3425,13 +3834,18 @@ class ConversationPanel extends StatelessWidget {
     required this.onContextMenu,
     required this.onSelect,
     this.onMenu,
+    this.onEditRemark,
+    this.onClearRecords,
+    this.onDeleteConversation,
   });
 
   final List<Conversation> conversations;
   final bool isScanning;
   final String scanStatus;
   final int selected;
-  final VoidCallback onRefresh;
+
+  /// Rescans for devices. Returns a future so pull-to-refresh can await it.
+  final Future<void> Function() onRefresh;
   final VoidCallback onShowQrCode;
   final VoidCallback onManualConnect;
   final void Function(int index, Offset position) onContextMenu;
@@ -3440,10 +3854,29 @@ class ConversationPanel extends StatelessWidget {
   /// Opens the navigation drawer on phone layouts; null on tablet/desktop.
   final VoidCallback? onMenu;
 
+  /// Android swipe-action callbacks. Null on desktop, where the right-click
+  /// context menu provides the same operations instead.
+  final ValueChanged<int>? onEditRemark;
+  final ValueChanged<int>? onClearRecords;
+  final ValueChanged<int>? onDeleteConversation;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: _panel,
+      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
       child: Column(
         children: [
           Container(
@@ -3481,36 +3914,9 @@ class ConversationPanel extends StatelessWidget {
                       enabled: !isScanning,
                       onPressed: onManualConnect,
                     ),
-                    _ToolButton(
-                      icon: Icons.drive_folder_upload_rounded,
-                      tooltip: '发送文件夹',
-                    ),
                   ],
                 ),
                 const SizedBox(height: 14),
-                Container(
-                  height: 38,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFECE3),
-                    border: Border.all(color: _line),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.search_rounded, size: 18, color: _muted),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '搜索设备、联系人或文件',
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: _muted, fontSize: 13),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
                 Row(
                   children: [
                     SizedBox(
@@ -3538,18 +3944,70 @@ class ConversationPanel extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(8),
-              itemCount: conversations.length,
-              itemBuilder: (context, index) {
-                return ConversationTile(
-                  conversation: conversations[index],
-                  selected: selected == index,
-                  onTap: () => onSelect(index),
-                  onContextMenu: (position) {
-                    onSelect(index);
-                    onContextMenu(index, position);
+            child: Builder(
+              builder: (context) {
+                final list = ListView.builder(
+                  padding: const EdgeInsets.all(8),
+                  // Always scrollable so pull-to-refresh works even when the
+                  // list is short or empty.
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  itemCount: conversations.length,
+                  itemBuilder: (context, index) {
+                    final conversation = conversations[index];
+                    final swipeEnabled =
+                        Platform.isAndroid && onDeleteConversation != null;
+                    // Stable per-conversation identity. The list re-sorts as
+                    // devices re-announce, so without a key the swipe State
+                    // would attach to whichever conversation lands at this
+                    // slot, leaving an unrelated row showing its actions open.
+                    final itemKey = ValueKey(
+                      conversation.device?.fingerprint ?? conversation.title,
+                    );
+                    final tile = ConversationTile(
+                      conversation: conversation,
+                      selected: selected == index,
+                      padded: !swipeEnabled,
+                      onTap: () => onSelect(index),
+                      onContextMenu: (position) {
+                        onSelect(index);
+                        onContextMenu(index, position);
+                      },
+                    );
+                    if (!swipeEnabled) {
+                      return KeyedSubtree(key: itemKey, child: tile);
+                    }
+                    return _SwipeActionTile(
+                      key: itemKey,
+                      actions: [
+                        _SwipeAction(
+                          icon: Icons.edit_rounded,
+                          label: '备注',
+                          color: _accent,
+                          onTap: () => onEditRemark?.call(index),
+                        ),
+                        _SwipeAction(
+                          icon: Icons.cleaning_services_rounded,
+                          label: '清空',
+                          color: _warning,
+                          onTap: () => onClearRecords?.call(index),
+                        ),
+                        _SwipeAction(
+                          icon: Icons.delete_outline_rounded,
+                          label: '删除',
+                          color: const Color(0xFFC85D4D),
+                          onTap: () => onDeleteConversation?.call(index),
+                        ),
+                      ],
+                      child: tile,
+                    );
                   },
+                );
+                // Pull-to-refresh to rescan devices (phone only).
+                if (!Platform.isAndroid) return list;
+                return RefreshIndicator(
+                  onRefresh: onRefresh,
+                  color: _accent,
+                  child: list,
                 );
               },
             ),
@@ -3577,21 +4035,115 @@ class _ToolButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
+      child: _PressableScale(
+        child: Tooltip(
+          message: tooltip,
+          child: ShadButton.outline(
+            onPressed: enabled ? onPressed ?? () {} : null,
+            width: 42,
+            height: 42,
+            padding: EdgeInsets.zero,
+            backgroundColor: _surface,
+            foregroundColor: _muted,
+            hoverForegroundColor: _text,
+            hoverBackgroundColor: _accentSoft,
+            child: Icon(icon, size: 19),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _IconShadButton extends StatelessWidget {
+  const _IconShadButton({
+    required this.icon,
+    required this.tooltip,
+    this.onPressed,
+    this.color,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PressableScale(
       child: Tooltip(
         message: tooltip,
         child: IconButton(
-          onPressed: enabled ? onPressed ?? () {} : null,
-          icon: Icon(icon, size: 19),
-          color: _muted,
+          onPressed: onPressed,
+          icon: Icon(icon, size: 20),
+          color: color ?? _muted,
           style: IconButton.styleFrom(
             fixedSize: const Size(42, 42),
-            backgroundColor: _surface,
+            backgroundColor: Colors.transparent,
+            foregroundColor: color ?? _muted,
+            hoverColor: _accentSoft,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+// ignore: unused_element
+class _SendShadButton extends StatelessWidget {
+  const _SendShadButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadButton(
+      onPressed: onPressed,
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      backgroundColor: _accent,
+      hoverBackgroundColor: Color.alphaBlend(
+        Colors.black.withValues(alpha: 0.08),
+        _accent,
+      ),
+      foregroundColor: Colors.white,
+      hoverForegroundColor: Colors.white,
+      child: const Text('发送', style: TextStyle(fontWeight: FontWeight.w700)),
+    );
+  }
+}
+
+// ignore: unused_element
+class _ComposerShadTextarea extends StatelessWidget {
+  const _ComposerShadTextarea({required this.controller, required this.onSend});
+
+  final TextEditingController controller;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return ShadTextarea(
+      controller: controller,
+      minHeight: 78,
+      maxHeight: 130,
+      resizable: false,
+      placeholder: const Text('输入消息...'),
+      inputPadding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+      decoration: ShadDecoration(
+        color: Colors.transparent,
+        border: ShadBorder.all(color: Colors.transparent, width: 0),
+        secondaryBorder: ShadBorder.all(color: Colors.transparent, width: 0),
+        focusedBorder: ShadBorder.all(color: Colors.transparent, width: 0),
+        secondaryFocusedBorder: ShadBorder.all(
+          color: Colors.transparent,
+          width: 0,
+        ),
+      ),
+      style: TextStyle(color: _text, fontSize: 14, height: 1.55),
+      onSubmitted: (_) => onSend(),
     );
   }
 }
@@ -3603,6 +4155,7 @@ class ConversationTile extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onContextMenu,
+    this.padded = true,
   });
 
   final Conversation conversation;
@@ -3610,103 +4163,301 @@ class ConversationTile extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<Offset> onContextMenu;
 
+  /// When false, omits the outer bottom spacing so a wrapper (e.g. the swipe
+  /// action container) can own the list gap instead.
+  final bool padded;
+
+  @override
+  Widget build(BuildContext context) {
+    final tile = Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      child: GestureDetector(
+        onSecondaryTapDown: (details) {
+          onContextMenu(details.globalPosition);
+        },
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(8),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            constraints: const BoxConstraints(minHeight: 72),
+            margin: EdgeInsets.only(left: selected ? 2 : 0),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: selected ? _accentSoft : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected
+                    ? _accent.withValues(alpha: 0.24)
+                    : Colors.transparent,
+              ),
+              boxShadow: selected
+                  ? const [
+                      BoxShadow(
+                        color: Color(0x0F0F172A),
+                        blurRadius: 14,
+                        offset: Offset(0, 6),
+                      ),
+                    ]
+                  : const [],
+            ),
+            child: Row(
+              children: [
+                ConversationAvatar(conversation: conversation, size: 44),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              conversation.title,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: _text,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          if (conversation.device != null)
+                            const Icon(
+                              Icons.wifi_rounded,
+                              color: Color(0xFF27A95D),
+                              size: 16,
+                            )
+                          else
+                            Text(
+                              conversation.time,
+                              style: const TextStyle(
+                                color: Color(0xFF9C998F),
+                                fontSize: 12,
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        conversation.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: _muted, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+                if (conversation.unread > 0) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    height: 20,
+                    constraints: const BoxConstraints(minWidth: 20),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    decoration: BoxDecoration(
+                      color: _warning,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      '${conversation.unread}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!padded) return tile;
+    return Padding(padding: const EdgeInsets.only(bottom: 4), child: tile);
+  }
+}
+
+/// A single revealed action behind a [_SwipeActionTile].
+class _SwipeAction {
+  const _SwipeAction({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+}
+
+/// Fixed width of each revealed swipe action button.
+const double _kSwipeActionExtent = 72;
+
+/// Swipe-left-to-reveal action buttons (Android only). Drag the tile left to
+/// expose the actions on the right; release past the halfway point (or with a
+/// leftward fling) to latch open, tap an action to run it, or tap the tile /
+/// drag back to close.
+class _SwipeActionTile extends StatefulWidget {
+  const _SwipeActionTile({
+    super.key,
+    required this.child,
+    required this.actions,
+  });
+
+  final Widget child;
+  final List<_SwipeAction> actions;
+
+  @override
+  State<_SwipeActionTile> createState() => _SwipeActionTileState();
+}
+
+class _SwipeActionTileState extends State<_SwipeActionTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  );
+
+  double get _maxDrag => widget.actions.length * _kSwipeActionExtent;
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    if (_maxDrag <= 0) return;
+    _controller.value -= details.primaryDelta! / _maxDrag;
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    final velocity = details.primaryVelocity ?? 0;
+    if (velocity < -250) {
+      _controller.animateTo(1, curve: Curves.easeOut);
+    } else if (velocity > 250) {
+      _controller.animateTo(0, curve: Curves.easeOut);
+    } else {
+      _controller.animateTo(
+        _controller.value > 0.5 ? 1 : 0,
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  void _close() => _controller.animateTo(0, curve: Curves.easeOut);
+
+  Future<void> _runAction(_SwipeAction action) async {
+    await _controller.animateTo(0, curve: Curves.easeOut);
+    if (!mounted) return;
+    action.onTap();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Material(
-        color: selected ? _surface : Colors.transparent,
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: GestureDetector(
-          onSecondaryTapDown: (details) {
-            onContextMenu(details.globalPosition);
-          },
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(8),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 70),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                border: selected
-                    ? Border(left: BorderSide(color: _accent, width: 3))
-                    : null,
-              ),
+        child: Stack(
+          children: [
+            Positioned.fill(
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  ConversationAvatar(conversation: conversation, size: 44),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                conversation.title,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: _text,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            if (conversation.device != null)
-                              const Icon(
-                                Icons.wifi_rounded,
-                                color: Color(0xFF27A95D),
-                                size: 16,
-                              )
-                            else
-                              Text(
-                                conversation.time,
-                                style: const TextStyle(
-                                  color: Color(0xFF9C998F),
-                                  fontSize: 12,
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          conversation.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: _muted, fontSize: 13),
-                        ),
-                      ],
+                  for (final action in widget.actions)
+                    _SwipeActionButton(
+                      action: action,
+                      width: _kSwipeActionExtent,
+                      onPressed: () => _runAction(action),
                     ),
-                  ),
-                  if (conversation.unread > 0) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      height: 20,
-                      constraints: const BoxConstraints(minWidth: 20),
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      decoration: BoxDecoration(
-                        color: _warning,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        '${conversation.unread}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
-          ),
+            AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final isOpen = _controller.value > 0.001;
+                return Transform.translate(
+                  offset: Offset(-_controller.value * _maxDrag, 0),
+                  // Opaque background: the foreground must fully occlude the
+                  // action buttons behind it when closed. ConversationTile is
+                  // transparent unless selected, so without this the actions
+                  // would bleed through any unselected row.
+                  child: ColoredBox(
+                    color: _panel,
+                    child: Stack(
+                      children: [
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: _onDragUpdate,
+                          onHorizontalDragEnd: _onDragEnd,
+                          child: widget.child,
+                        ),
+                        // While open, a transparent barrier swallows taps so
+                        // the first tap closes the tile instead of selecting it.
+                        if (isOpen)
+                          Positioned.fill(
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: _close,
+                              onHorizontalDragUpdate: _onDragUpdate,
+                              onHorizontalDragEnd: _onDragEnd,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SwipeActionButton extends StatelessWidget {
+  const _SwipeActionButton({
+    required this.action,
+    required this.width,
+    required this.onPressed,
+  });
+
+  final _SwipeAction action;
+  final double width;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onPressed,
+      child: Container(
+        width: width,
+        color: action.color,
+        alignment: Alignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(action.icon, color: Colors.white, size: 20),
+            const SizedBox(height: 4),
+            Text(
+              action.label,
+              style: const TextStyle(color: Colors.white, fontSize: 11),
+            ),
+          ],
         ),
       ),
     );
@@ -3832,7 +4583,20 @@ class ChatPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: _chatBg,
+      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: _chatBg,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0A0F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
       child: Stack(
         children: [
           Column(
@@ -3855,62 +4619,87 @@ class ChatPanel extends StatelessWidget {
               ),
               if (showDetails)
                 Expanded(
-                  child: DeviceDetailsPage(
-                    conversation: conversation,
-                    clipboardAutoSendEnabled: clipboardAutoSendEnabled,
-                    onClipboardAutoSendChanged: onClipboardAutoSendChanged,
+                  child: _SoftAppear(
+                    offset: const Offset(10, 0),
+                    duration: const Duration(milliseconds: 260),
+                    child: DeviceDetailsPage(
+                      conversation: conversation,
+                      clipboardAutoSendEnabled: clipboardAutoSendEnabled,
+                      onClipboardAutoSendChanged: onClipboardAutoSendChanged,
+                    ),
                   ),
                 )
               else ...[
                 Expanded(
-                  child: ListView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.all(24),
-                    children: [
-                      ...conversation.messages.map(
-                        (message) => MessageBubble(
-                          message: message,
-                          selectionMode: selectionMode,
-                          selected: selectedMessageIds.contains(message.id),
-                          onToggleSelected: () =>
-                              onToggleMessageSelection(message.id),
-                          onRetrySend: () => onRetrySendAttachment(message.id),
-                          onCancelTransfer: () =>
-                              onCancelTransfer(message.id),
-                          onCopyAttachment: onCopyAttachment,
-                          onPreviewImage: onPreviewImage,
-                        ),
-                      ),
-                      if (conversation.files.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          '传输队列',
-                          style: TextStyle(
-                            color: _muted,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                  child: _SoftAppear(
+                    offset: const Offset(10, 0),
+                    duration: const Duration(milliseconds: 260),
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(24),
+                      children: [
+                        ...conversation.messages.map(
+                          (message) => MessageBubble(
+                            key: ValueKey('message-${message.id}'),
+                            message: message,
+                            selectionMode: selectionMode,
+                            selected: selectedMessageIds.contains(message.id),
+                            onToggleSelected: () =>
+                                onToggleMessageSelection(message.id),
+                            onRetrySend: () =>
+                                onRetrySendAttachment(message.id),
+                            onCancelTransfer: () =>
+                                onCancelTransfer(message.id),
+                            onCopyAttachment: onCopyAttachment,
+                            onPreviewImage: onPreviewImage,
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 12,
-                          runSpacing: 12,
-                          children: conversation.files
-                              .map((file) => FileCard(file: file))
-                              .toList(),
-                        ),
+                        if (conversation.files.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            '传输队列',
+                            style: TextStyle(
+                              color: _muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              for (
+                                var index = 0;
+                                index < conversation.files.length;
+                                index++
+                              )
+                                _SoftAppear(
+                                  delay: Duration(milliseconds: index * 35),
+                                  offset: const Offset(0, 8),
+                                  child: FileCard(
+                                    file: conversation.files[index],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
                       ],
-                    ],
+                    ),
                   ),
                 ),
-                Composer(
-                  controller: controller,
-                  pendingAttachments: pendingAttachments,
-                  onSend: onSend,
-                  onSendImage: onSendImage,
-                  onSendFile: onSendFile,
-                  onPasteImages: onPasteImages,
-                  onRemovePendingAttachment: onRemovePendingAttachment,
+                _SoftAppear(
+                  offset: const Offset(0, 16),
+                  duration: const Duration(milliseconds: 320),
+                  child: Composer(
+                    controller: controller,
+                    pendingAttachments: pendingAttachments,
+                    onSend: onSend,
+                    onSendImage: onSendImage,
+                    onSendFile: onSendFile,
+                    onPasteImages: onPasteImages,
+                    onRemovePendingAttachment: onRemovePendingAttachment,
+                  ),
                 ),
               ],
             ],
@@ -4059,16 +4848,14 @@ class ChatHeader extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  selectionMode
-                      ? '批量删除聊天记录'
-                      : showDetails
-                      ? conversation.title
-                      : conversation.status,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: _muted, fontSize: 13),
-                ),
+                if (selectionMode || showDetails) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    selectionMode ? '批量删除聊天记录' : conversation.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: _muted, fontSize: 13),
+                  ),
+                ],
               ],
             ),
           ),
@@ -4130,17 +4917,11 @@ class _HeaderButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        onPressed: onPressed,
-        icon: Icon(icon, size: 20),
-        color: color ?? _muted,
-        style: IconButton.styleFrom(
-          fixedSize: const Size(42, 42),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-      ),
+    return _IconShadButton(
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: onPressed,
+      color: color,
     );
   }
 }
@@ -4463,7 +5244,13 @@ class MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bubble = _buildBubble();
+    final bubble = _SoftAppear(
+      offset: message.system
+          ? const Offset(0, 8)
+          : Offset(message.isMe ? 12 : -12, 8),
+      duration: const Duration(milliseconds: 240),
+      child: _buildBubble(),
+    );
     if (!selectionMode) return bubble;
 
     return InkWell(
@@ -4524,8 +5311,6 @@ class MessageBubble extends StatelessWidget {
 
   List<Widget> _peerChildren() {
     return [
-      InitialAvatar(text: message.sender, size: 36),
-      const SizedBox(width: 10),
       _BubbleSurface(
         message: message,
         onRetrySend: onRetrySend,
@@ -4550,8 +5335,6 @@ class MessageBubble extends StatelessWidget {
         onCopyAttachment: onCopyAttachment,
         onPreviewImage: onPreviewImage,
       ),
-      const SizedBox(width: 10),
-      const InitialAvatar(text: '文', size: 36),
     ];
   }
 }
@@ -5048,14 +5831,13 @@ class FileCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return ShadCard(
       width: 240,
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
-        borderRadius: BorderRadius.circular(8),
-      ),
+      backgroundColor: _surface,
+      radius: BorderRadius.circular(8),
+      border: ShadBorder.all(color: _line, width: 1),
+      shadows: const [],
       child: Row(
         children: [
           Container(
@@ -5085,15 +5867,14 @@ class FileCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(file.size, style: TextStyle(color: _muted, fontSize: 12)),
                 const SizedBox(height: 8),
-                SizedBox(
-                  height: 5,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(999),
-                    child: LinearProgressIndicator(
-                      value: file.progress / 100,
-                      color: _accent,
-                      backgroundColor: const Color(0xFFEFECE3),
-                    ),
+                ShadProgress(
+                  value: file.progress / 100,
+                  minHeight: 5,
+                  color: _accent,
+                  backgroundColor: const Color(0xFFEFECE3),
+                  borderRadius: const BorderRadius.all(Radius.circular(999)),
+                  innerBorderRadius: const BorderRadius.all(
+                    Radius.circular(999),
                   ),
                 ),
               ],
@@ -5149,10 +5930,6 @@ class Composer extends StatelessWidget {
               child: Row(
                 children: [
                   _ComposerButton(
-                    icon: Icons.emoji_emotions_outlined,
-                    tooltip: '表情',
-                  ),
-                  _ComposerButton(
                     icon: Icons.image_outlined,
                     tooltip: '图片',
                     onPressed: onSendImage,
@@ -5166,10 +5943,6 @@ class Composer extends StatelessWidget {
                     icon: Icons.content_paste_rounded,
                     tooltip: '粘贴图片',
                     onPressed: () => onPasteImages(),
-                  ),
-                  _ComposerButton(
-                    icon: Icons.screenshot_monitor_rounded,
-                    tooltip: '截图',
                   ),
                 ],
               ),
@@ -5185,14 +5958,31 @@ class Composer extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
-                    child: TextField(
+                    child: ShadTextarea(
                       controller: controller,
-                      minLines: 3,
-                      maxLines: 5,
-                      decoration: const InputDecoration(
-                        hintText: '输入消息...',
-                        border: InputBorder.none,
-                        isDense: true,
+                      key: const ValueKey('composer-input'),
+                      minHeight: 78,
+                      maxHeight: 130,
+                      resizable: false,
+                      placeholder: const Text('输入消息...'),
+                      decoration: ShadDecoration(
+                        color: Colors.transparent,
+                        border: ShadBorder.all(
+                          color: Colors.transparent,
+                          width: 0,
+                        ),
+                        focusedBorder: ShadBorder.all(
+                          color: Colors.transparent,
+                          width: 0,
+                        ),
+                        secondaryBorder: ShadBorder.all(
+                          color: Colors.transparent,
+                          width: 0,
+                        ),
+                        secondaryFocusedBorder: ShadBorder.all(
+                          color: Colors.transparent,
+                          width: 0,
+                        ),
                       ),
                       style: TextStyle(
                         color: _text,
@@ -5205,16 +5995,17 @@ class Composer extends StatelessWidget {
                   const SizedBox(width: 14),
                   SizedBox(
                     height: 38,
-                    child: FilledButton(
+                    child: ShadButton(
                       onPressed: onSend,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _accent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                      height: 38,
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      backgroundColor: _accent,
+                      hoverBackgroundColor: Color.alphaBlend(
+                        Colors.black.withValues(alpha: 0.08),
+                        _accent,
                       ),
+                      foregroundColor: Colors.white,
+                      hoverForegroundColor: Colors.white,
                       child: const Text(
                         '发送',
                         style: TextStyle(fontWeight: FontWeight.w700),
@@ -5244,15 +6035,19 @@ class _ComposerButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: IconButton(
-        onPressed: onPressed ?? () {},
-        icon: Icon(icon, size: 20),
-        color: _muted,
-        style: IconButton.styleFrom(
-          fixedSize: const Size(36, 36),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    return _PressableScale(
+      child: Tooltip(
+        message: tooltip,
+        child: IconButton(
+          onPressed: onPressed ?? () {},
+          icon: Icon(icon, size: 20),
+          color: _muted,
+          style: IconButton.styleFrom(
+            fixedSize: const Size(36, 36),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
         ),
       ),
     );
@@ -5280,9 +6075,14 @@ class PendingAttachmentStrip extends StatelessWidget {
         separatorBuilder: (context, index) => const SizedBox(width: 10),
         itemBuilder: (context, index) {
           final attachment = attachments[index];
-          return PendingAttachmentTile(
-            attachment: attachment,
-            onRemove: () => onRemove(attachment),
+          return _SoftAppear(
+            key: ValueKey(attachment.path),
+            delay: Duration(milliseconds: index * 30),
+            offset: const Offset(0, 8),
+            child: PendingAttachmentTile(
+              attachment: attachment,
+              onRemove: () => onRemove(attachment),
+            ),
           );
         },
       ),
@@ -5424,6 +6224,7 @@ class Conversation {
     required this.files,
     this.unread = 0,
     this.device,
+    this.ephemeral = false,
   });
 
   final String title;
@@ -5435,6 +6236,11 @@ class Conversation {
   final List<ChatMessage> messages;
   final List<TransferFile> files;
   final DiscoveredDevice? device;
+
+  /// True for a placeholder created purely from LAN discovery (no real message
+  /// exchanged yet). Ephemeral conversations are not persisted to disk, so a
+  /// device merely seen on the network does not accumulate as a ghost chat.
+  final bool ephemeral;
 
   Conversation copyWith({
     String? title,
@@ -5456,6 +6262,7 @@ class Conversation {
       messages: messages ?? this.messages,
       files: files ?? this.files,
       device: device,
+      ephemeral: ephemeral,
     );
   }
 
@@ -5476,6 +6283,7 @@ class Conversation {
       messages: nextMessages,
       files: files,
       device: device,
+      ephemeral: ephemeral,
     );
   }
 
@@ -5494,6 +6302,9 @@ class Conversation {
       messages: [...messages, message],
       files: files,
       device: device,
+      // A real message exchange promotes the conversation out of the
+      // discovery-only placeholder state, so it is now worth persisting.
+      ephemeral: false,
     );
   }
 
@@ -5516,6 +6327,7 @@ class Conversation {
       messages: nextMessages,
       files: files,
       device: device,
+      ephemeral: ephemeral,
     );
   }
 
@@ -5538,6 +6350,7 @@ class Conversation {
       messages: nextMessages,
       files: files,
       device: device,
+      ephemeral: ephemeral,
     );
   }
 
@@ -5549,6 +6362,49 @@ class Conversation {
           : '[文件] ${attachment.name}';
     }
     return message.text;
+  }
+
+  /// Serializes the conversation (including chat history and the associated
+  /// device) for local persistence across restarts.
+  Map<String, dynamic> toJson() {
+    return {
+      'title': title,
+      'subtitle': subtitle,
+      'status': status,
+      'time': time,
+      'initials': initials,
+      'unread': unread,
+      'messages': messages.map((message) => message.toJson()).toList(),
+      'files': files.map((file) => file.toJson()).toList(),
+      'device': device?.toJson(),
+    };
+  }
+
+  factory Conversation.fromJson(Map<String, dynamic> json) {
+    final device = json['device'];
+    return Conversation(
+      title: json['title'] as String? ?? '',
+      subtitle: json['subtitle'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      time: json['time'] as String? ?? '',
+      initials: json['initials'] as String? ?? '?',
+      unread: json['unread'] is int ? json['unread'] as int : 0,
+      messages:
+          (json['messages'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .map(ChatMessage.fromJson)
+              .toList() ??
+          [],
+      files:
+          (json['files'] as List?)
+              ?.whereType<Map<String, dynamic>>()
+              .map(TransferFile.fromJson)
+              .toList() ??
+          [],
+      device: device is Map<String, dynamic>
+          ? DiscoveredDevice.fromJson(device)
+          : null,
+    );
   }
 }
 
@@ -5603,6 +6459,46 @@ class ChatMessage {
       progress: progress ?? this.progress,
     );
   }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'text': text,
+      'sender': sender,
+      'isMe': isMe,
+      'system': system,
+      'attachment': attachment?.toJson(),
+      'status': status.name,
+      'progress': progress,
+    };
+  }
+
+  factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    var status = MessageSendStatus.values.firstWhere(
+      (value) => value.name == json['status'],
+      orElse: () => MessageSendStatus.none,
+    );
+    // No live transfer survives a restart, so a persisted "sending" message is
+    // stuck — surface it as failed so the user can retry.
+    if (status == MessageSendStatus.sending) {
+      status = MessageSendStatus.failed;
+    }
+    final attachment = json['attachment'];
+    return ChatMessage(
+      json['text'] as String? ?? '',
+      id: json['id'] as String?,
+      sender: json['sender'] as String? ?? 'T',
+      isMe: json['isMe'] as bool? ?? false,
+      system: json['system'] as bool? ?? false,
+      attachment: attachment is Map<String, dynamic>
+          ? MessageAttachment.fromJson(attachment)
+          : null,
+      status: status,
+      progress: status == MessageSendStatus.failed
+          ? null
+          : (json['progress'] as num?)?.toDouble(),
+    );
+  }
 }
 
 enum MessageSendStatus { none, sending, sent, failed, cancelled }
@@ -5635,6 +6531,19 @@ class MessageAttachment {
       name: attachment.name,
       size: attachment.size,
       kind: attachment.isImage ? FileKind.image : FileKind.file,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {'path': path, 'name': name, 'size': size, 'kind': kind.name};
+  }
+
+  factory MessageAttachment.fromJson(Map<String, dynamic> json) {
+    return MessageAttachment(
+      path: json['path'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      size: json['size'] is int ? json['size'] as int : 0,
+      kind: FileKind.fromName(json['kind']),
     );
   }
 
@@ -5692,6 +6601,24 @@ class TransferFile {
   final int progress;
   final FileKind kind;
 
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'size': size,
+      'progress': progress,
+      'kind': kind.name,
+    };
+  }
+
+  factory TransferFile.fromJson(Map<String, dynamic> json) {
+    return TransferFile(
+      json['name'] as String? ?? '',
+      json['size'] as String? ?? '',
+      json['progress'] is int ? json['progress'] as int : 0,
+      FileKind.fromName(json['kind']),
+    );
+  }
+
   IconData get icon {
     switch (kind) {
       case FileKind.image:
@@ -5735,6 +6662,14 @@ enum FileKind {
       '.pptx' => FileKind.doc,
       _ => FileKind.file,
     };
+  }
+
+  /// Parses a persisted enum name (see [FileKind.name]).
+  static FileKind fromName(Object? value) {
+    return FileKind.values.firstWhere(
+      (kind) => kind.name == value,
+      orElse: () => FileKind.file,
+    );
   }
 
   IconData get icon {

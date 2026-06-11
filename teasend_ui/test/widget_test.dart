@@ -1,13 +1,16 @@
-﻿// This is a basic Flutter widget test.
+// This is a basic Flutter widget test.
 //
 // To perform an interaction with a widget in your test, use the WidgetTester
 // utility in the flutter_test package. For example, you can send tap and scroll
 // gestures. You can also use WidgetTester to find child widgets in the widget
 // tree, read text, and verify that the values of widget properties are correct.
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:nearsend/main.dart';
@@ -15,7 +18,27 @@ import 'package:nearsend/models/discovered_device.dart';
 
 void main() {
   setUp(() {
-    SharedPreferences.setMockInitialValues({});
+    // Seed a persisted conversation so the NearSendApp smoke tests have a
+    // conversation to operate on (the app no longer ships a placeholder one).
+    // This also exercises the Conversation JSON round-trip on load.
+    final helper = Conversation(
+      title: '文件传输助手',
+      subtitle: '已保存 3 个文件到本地',
+      status: '常用工具',
+      time: '周五',
+      initials: '文',
+      messages: [
+        ChatMessage('周五 14:22', system: true),
+        ChatMessage('文件会暂时保留在本地下载目录', sender: '文'),
+      ],
+      files: [
+        TransferFile('invoice.pdf', '680 KB', 100, FileKind.pdf),
+        TransferFile('photo-set.zip', '42.6 MB', 100, FileKind.archive),
+      ],
+    );
+    SharedPreferences.setMockInitialValues({
+      'device_conversations': jsonEncode({'helper': helper.toJson()}),
+    });
   });
 
   testWidgets('chat prototype smoke test', (WidgetTester tester) async {
@@ -25,12 +48,13 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     expect(find.text('文件传输助手'), findsWidgets);
     expect(find.text('输入消息...'), findsOneWidget);
     expect(find.text('发送'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), '你好，NearSend');
+    await tester.enterText(find.byType(EditableText), '你好，NearSend');
     await tester.tap(find.text('发送'));
     await tester.pumpAndSettle();
 
@@ -45,6 +69,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.checklist_rounded));
     await tester.pumpAndSettle();
@@ -68,6 +93,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.checklist_rounded));
     await tester.pumpAndSettle();
@@ -101,6 +127,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('文件传输助手').first, buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
@@ -116,6 +143,30 @@ void main() {
     expect(find.text('暂无聊天记录'), findsOneWidget);
   });
 
+  testWidgets('can delete the only conversation without crashing', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('文件传输助手').first, buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('删除会话'));
+    await tester.pumpAndSettle();
+
+    // Removing the last conversation must empty the list and show the empty
+    // state rather than throwing on the index clamp.
+    expect(tester.takeException(), isNull);
+    expect(find.text('文件传输助手'), findsNothing);
+    expect(find.text('暂无会话，等待局域网设备…'), findsOneWidget);
+  });
+
   testWidgets('shows conversation detail page in chat area', (
     WidgetTester tester,
   ) async {
@@ -125,6 +176,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.info_outline_rounded));
     await tester.pumpAndSettle();
@@ -146,12 +198,121 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.qr_code_rounded));
     await tester.pumpAndSettle();
 
     expect(find.text('连接二维码'), findsOneWidget);
     expect(find.text('127.0.0.1:53317'), findsOneWidget);
+  });
+
+  testWidgets('shows manual connect dialog with editable fields', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add_link_rounded));
+    await tester.pumpAndSettle();
+
+    expect(find.text('手动连接'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(2));
+    expect(find.text('127.0.0.1'), findsNothing);
+  });
+
+  testWidgets('cancelling manual connect dialog does not throw', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byIcon(Icons.add_link_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('手动连接'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    // Pump through the dialog's exit animation: a controller disposed too early
+    // would surface "used after being disposed" while the fields fade out.
+    await tester.pumpAndSettle();
+
+    expect(find.text('手动连接'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('shows local device info dialog with editable alias', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('本设备信息'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('本设备信息'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+    expect(find.text('设备指纹'), findsOneWidget);
+  });
+
+  testWidgets('cancelling device info dialog does not throw', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('本设备信息'));
+    await tester.pumpAndSettle();
+    expect(find.text('本设备信息'), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('本设备信息'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelling conversation rename dialog does not throw', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    // Open the conversation context menu and pick rename ("重命名").
+    await tester.tap(find.text('文件传输助手').first, buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsOneWidget);
+
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('uses device icons for discovered conversations', (
@@ -267,6 +428,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('设置'));
     await tester.pumpAndSettle();
@@ -277,16 +439,16 @@ void main() {
     expect(find.byIcon(Icons.folder_open_rounded), findsOneWidget);
     expect(find.text('产品设计'), findsNothing);
 
-    final switches = find.byType(Switch);
+    final switches = find.byType(ShadSwitch);
     expect(switches, findsNWidgets(3));
 
-    var autoSaveSwitch = tester.widget<Switch>(switches.first);
+    var autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
     expect(autoSaveSwitch.value, isFalse);
 
     await tester.tap(switches.first);
     await tester.pumpAndSettle();
 
-    autoSaveSwitch = tester.widget<Switch>(switches.first);
+    autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
     expect(autoSaveSwitch.value, isTrue);
   });
 
@@ -299,6 +461,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byTooltip('主题'));
     await tester.pumpAndSettle();
@@ -311,10 +474,10 @@ void main() {
     await tester.tap(find.text('夜间'));
     await tester.pumpAndSettle();
 
-    final segmentedButton = tester.widget<SegmentedButton<AppThemeMode>>(
-      find.byType(SegmentedButton<AppThemeMode>),
+    final nightButton = tester.widget<ShadButton>(
+      find.ancestor(of: find.text('夜间'), matching: find.byType(ShadButton)),
     );
-    expect(segmentedButton.selected, contains(AppThemeMode.dark));
+    expect(nightButton.backgroundColor, const Color(0xFF2563EB));
 
     expect(find.byTooltip('切换主题色'), findsWidgets);
   });
@@ -391,7 +554,7 @@ void main() {
             selected: false,
             onToggleSelected: () {},
             onRetrySend: () {},
-                onCancelTransfer: () {},
+            onCancelTransfer: () {},
             onCopyAttachment: (_) {},
             onPreviewImage: (_) {},
           ),
@@ -484,7 +647,7 @@ void main() {
                     selected: false,
                     onToggleSelected: () {},
                     onRetrySend: () {},
-                onCancelTransfer: () {},
+                    onCancelTransfer: () {},
                     onCopyAttachment: (_) {},
                     onPreviewImage: (value) {
                       setState(() {

@@ -4,12 +4,14 @@ localsend/
 # Local installers and downloaded assets.
 rustup-init.exe
 9e470bd0-f426-494c-a636-7bc9abca42ec.png
+teasend_ui/flutter_*.png
 
 # Flutter/Dart build and tool output.
 **/.dart_tool/
 **/build/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
+**/devtools_options.yaml
 
 # IDE/user-local files.
 **/.idea/

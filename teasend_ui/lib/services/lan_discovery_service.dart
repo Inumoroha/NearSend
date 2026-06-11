@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -75,20 +75,36 @@ class LanDiscoveryService {
   }
 
   Future<void> announce() async {
-    final payload = utf8.encode(jsonEncode(_multicastMessage(announce: true)));
-
     for (final delay in const [100, 500, 2000]) {
       await Future<void>.delayed(Duration(milliseconds: delay));
+      await _sendMulticast(_multicastMessage(announce: true));
+    }
+  }
+
+  /// Sends a multicast datagram out of every LAN interface.
+  ///
+  /// Binding the sender to each interface address (instead of a single
+  /// `anyIPv4` socket) pins the egress interface, so the packet is not confined
+  /// to the OS default route — which on multi-homed hosts is often a virtual /
+  /// VPN / wrong adapter, leaving Wi-Fi peers unable to hear the announcement.
+  Future<void> _sendMulticast(Map<String, Object?> message) async {
+    final payload = utf8.encode(jsonEncode(message));
+    final interfaces = await _networkInterfaces();
+    final addresses = <InternetAddress>[
+      for (final interface in interfaces)
+        for (final address in interface.addresses.where(_isLanAddress)) address,
+    ];
+    if (addresses.isEmpty) {
+      addresses.add(InternetAddress.anyIPv4);
+    }
+
+    for (final address in addresses) {
       RawDatagramSocket? socket;
       try {
-        socket = await RawDatagramSocket.bind(
-          InternetAddress.anyIPv4,
-          0,
-          reuseAddress: true,
-        );
+        socket = await RawDatagramSocket.bind(address, 0, reuseAddress: true);
         socket.send(payload, InternetAddress(multicastGroup), boundPort);
       } catch (_) {
-        // Discovery should continue even if multicast send fails.
+        // Some adapters cannot send multicast; keep trying the rest.
       } finally {
         socket?.close();
       }
@@ -213,20 +229,8 @@ class LanDiscoveryService {
     final tcpAnswered = await _postRegister(peer);
     if (tcpAnswered) return;
 
-    final payload = utf8.encode(jsonEncode(_multicastMessage(announce: false)));
-    RawDatagramSocket? socket;
-    try {
-      socket = await RawDatagramSocket.bind(
-        InternetAddress.anyIPv4,
-        0,
-        reuseAddress: true,
-      );
-      socket.send(payload, InternetAddress(multicastGroup), boundPort);
-    } catch (_) {
-      // Ignore failed fallback responses.
-    } finally {
-      socket?.close();
-    }
+    // Fall back to a multicast reply (announce:false) out of every interface.
+    await _sendMulticast(_multicastMessage(announce: false));
   }
 
   Future<bool> _postRegister(DiscoveredDevice peer) async {
