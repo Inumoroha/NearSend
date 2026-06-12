@@ -8,8 +8,14 @@ import 'localsend_file_transfer.dart';
 import 'localsend_identity.dart';
 
 class LocalSendDiscoveryServer {
-  LocalSendDiscoveryServer({required this.identity}) {
-    _fileTransfer = LocalSendFileTransferService(identity: identity);
+  LocalSendDiscoveryServer({
+    required this.identity,
+    bool requireReceiveConfirmation = false,
+  }) {
+    _fileTransfer = LocalSendFileTransferService(
+      identity: identity,
+      requireReceiveConfirmation: requireReceiveConfirmation,
+    );
   }
 
   final LocalSendIdentity identity;
@@ -21,8 +27,15 @@ class LocalSendDiscoveryServer {
 
   Stream<DiscoveredDevice> get devices => _deviceController.stream;
   Stream<NearSendMessage> get messages => _messageController.stream;
+  Stream<IncomingTransferRequest> get incomingRequests =>
+      _fileTransfer.incomingRequests;
 
   int get boundPort => _server?.port ?? identity.port;
+
+  bool acceptIncomingTransfer(String sessionId) =>
+      _fileTransfer.acceptIncoming(sessionId);
+  bool declineIncomingTransfer(String sessionId) =>
+      _fileTransfer.declineIncoming(sessionId);
 
   Future<void> start() async {
     if (_server != null) return;
@@ -78,6 +91,13 @@ class LocalSendDiscoveryServer {
       return;
     }
 
+    if (method == 'POST' &&
+        (path == '/api/localsend/v1/cancel' ||
+            path == '/api/localsend/v2/cancel')) {
+      await _handleCancel(request);
+      return;
+    }
+
     if (method == 'POST' && path == '/api/nearsend/v1/message') {
       await _handleNearSendMessage(request);
       return;
@@ -102,6 +122,10 @@ class LocalSendDiscoveryServer {
     try {
       final response = await _fileTransfer.handlePrepareUpload(request);
       await _respondJson(request, HttpStatus.ok, response);
+    } on TransferDeclinedException {
+      await _respondJson(request, HttpStatus.forbidden, {
+        'message': 'File request declined by recipient',
+      });
     } catch (_) {
       await _respondJson(request, HttpStatus.badRequest, {
         'message': 'Request body malformed',
@@ -113,11 +137,27 @@ class LocalSendDiscoveryServer {
     try {
       await _fileTransfer.handleUpload(request);
       await _respondJson(request, HttpStatus.ok, {'ok': true});
+    } on TransferCancelledException {
+      await _respondJson(request, HttpStatus.forbidden, {
+        'message': 'Transfer cancelled',
+      });
     } catch (_) {
       await _respondJson(request, HttpStatus.forbidden, {
         'message': 'Invalid upload',
       });
     }
+  }
+
+  Future<void> _handleCancel(HttpRequest request) async {
+    final sessionId = request.uri.queryParameters['sessionId'];
+    if (sessionId == null || sessionId.isEmpty) {
+      await _respondJson(request, HttpStatus.badRequest, {
+        'message': 'Missing sessionId',
+      });
+      return;
+    }
+    _fileTransfer.cancelIncoming(sessionId);
+    await _respondJson(request, HttpStatus.ok, {'ok': true});
   }
 
   Future<void> _handleRegister(HttpRequest request) async {

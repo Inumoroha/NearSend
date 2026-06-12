@@ -23,10 +23,19 @@ class TransferCancelledException implements Exception {
 class TransferHandle {
   bool _cancelled = false;
   HttpClient? _client;
+  DiscoveredDevice? _target;
+  String? _sessionId;
 
   bool get isCancelled => _cancelled;
 
   void _bind(HttpClient client) => _client = client;
+  void _bindRemote(DiscoveredDevice target, String? sessionId) {
+    _target = target;
+    _sessionId = sessionId;
+  }
+
+  DiscoveredDevice? get target => _target;
+  String? get sessionId => _sessionId;
 
   void cancel() {
     _cancelled = true;
@@ -35,17 +44,26 @@ class TransferHandle {
 }
 
 class LocalSendFileTransferService {
-  LocalSendFileTransferService({required this.identity});
+  LocalSendFileTransferService({
+    required this.identity,
+    this.requireReceiveConfirmation = false,
+  });
 
   final LocalSendIdentity identity;
+  final bool requireReceiveConfirmation;
   final _incomingController = StreamController<NearSendMessage>.broadcast();
+  final _requestController =
+      StreamController<IncomingTransferRequest>.broadcast();
   final _sessions = <String, _ReceiveSession>{};
   final _random = Random.secure();
 
   Stream<NearSendMessage> get incomingFiles => _incomingController.stream;
+  Stream<IncomingTransferRequest> get incomingRequests =>
+      _requestController.stream;
 
   Future<void> dispose() async {
     await _incomingController.close();
+    await _requestController.close();
   }
 
   Future<Map<String, Object?>> handlePrepareUpload(HttpRequest request) async {
@@ -93,6 +111,33 @@ class LocalSendFileTransferService {
       files: files,
     );
 
+    if (requireReceiveConfirmation) {
+      _requestController.add(
+        IncomingTransferRequest(
+          sessionId: sessionId,
+          senderAlias: senderAlias,
+          senderFingerprint: senderFingerprint,
+          files: files.values
+              .map(
+                (file) => IncomingTransferFile(
+                  id: file.id,
+                  name: file.name,
+                  size: file.size,
+                ),
+              )
+              .toList(),
+        ),
+      );
+      final accepted = await _sessions[sessionId]!.decision.future.timeout(
+        const Duration(minutes: 2),
+        onTimeout: () => false,
+      );
+      if (!accepted) {
+        _sessions.remove(sessionId);
+        throw const TransferDeclinedException();
+      }
+    }
+
     return {'sessionId': sessionId, 'files': responseFiles};
   }
 
@@ -109,6 +154,9 @@ class LocalSendFileTransferService {
     if (session == null || incoming == null || incoming.token != token) {
       throw const FormatException('Invalid upload token');
     }
+    if (session.cancelled) {
+      throw const TransferCancelledException();
+    }
 
     final directory = await Directory.systemTemp.createTemp(
       'nearsend_localsend_',
@@ -116,10 +164,22 @@ class LocalSendFileTransferService {
     final safeName = incoming.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
     final file = File('${directory.path}${Platform.pathSeparator}$safeName');
     final sink = file.openWrite();
-    await for (final chunk in request) {
-      sink.add(chunk);
+    var received = 0;
+    try {
+      await for (final chunk in request) {
+        if (session.cancelled) {
+          throw const TransferCancelledException();
+        }
+        received += chunk.length;
+        incoming.received = received;
+        sink.add(chunk);
+      }
+    } finally {
+      await sink.close();
     }
-    await sink.close();
+    if (session.cancelled) {
+      throw const TransferCancelledException();
+    }
 
     _incomingController.add(
       NearSendMessage(
@@ -127,6 +187,8 @@ class LocalSendFileTransferService {
         senderAlias: session.senderAlias,
         text: '',
         receivedAt: DateTime.now(),
+        sessionId: session.sessionId,
+        fileId: incoming.id,
         attachment: NearSendAttachment(
           path: file.path,
           name: incoming.name,
@@ -135,6 +197,38 @@ class LocalSendFileTransferService {
         ),
       ),
     );
+
+    if (session.files.values.every((file) => file.received >= file.size)) {
+      _sessions.remove(sessionId);
+    }
+  }
+
+  bool acceptIncoming(String sessionId) {
+    final session = _sessions[sessionId];
+    if (session == null || session.decision.isCompleted) return false;
+    session.decision.complete(true);
+    return true;
+  }
+
+  bool declineIncoming(String sessionId) {
+    final session = _sessions.remove(sessionId);
+    if (session == null) return false;
+    session.cancelled = true;
+    if (!session.decision.isCompleted) {
+      session.decision.complete(false);
+    }
+    return true;
+  }
+
+  bool cancelIncoming(String sessionId) {
+    final session = _sessions[sessionId];
+    if (session == null) return false;
+    session.cancelled = true;
+    if (!session.decision.isCompleted) {
+      session.decision.complete(false);
+    }
+    _sessions.remove(sessionId);
+    return true;
   }
 
   Future<void> sendFile({
@@ -175,6 +269,7 @@ class LocalSendFileTransferService {
     final totalBytes = files.fold<int>(0, (sum, file) => sum + file.size);
     final prepareResponse = await _prepareUpload(target: target, files: files);
     final remoteSessionId = prepareResponse.sessionId;
+    handle?._bindRemote(target, remoteSessionId);
     var uploadedAny = false;
     var sentBefore = 0;
 
@@ -196,6 +291,33 @@ class LocalSendFileTransferService {
     }
     if (!uploadedAny) {
       throw const HttpException('LocalSend receiver did not accept any files');
+    }
+  }
+
+  Future<void> cancelRemote(TransferHandle handle) async {
+    final target = handle.target;
+    final sessionId = handle.sessionId;
+    if (target == null || sessionId == null) return;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    try {
+      final request = await client.postUrl(
+        Uri(
+          scheme: target.https ? 'https' : 'http',
+          host: target.ip,
+          port: target.port,
+          path: target.version == '1.0'
+              ? '/api/localsend/v1/cancel'
+              : '/api/localsend/v2/cancel',
+          queryParameters: target.version == '1.0'
+              ? null
+              : {'sessionId': sessionId},
+        ),
+      );
+      await request.close().timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // Best-effort notification; the local connection is already closed.
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -350,8 +472,43 @@ class LocalSendFileTransferService {
   }
 }
 
+class TransferDeclinedException implements Exception {
+  const TransferDeclinedException();
+
+  @override
+  String toString() => 'TransferDeclinedException';
+}
+
+class IncomingTransferRequest {
+  const IncomingTransferRequest({
+    required this.sessionId,
+    required this.senderAlias,
+    required this.senderFingerprint,
+    required this.files,
+  });
+
+  final String sessionId;
+  final String senderAlias;
+  final String senderFingerprint;
+  final List<IncomingTransferFile> files;
+
+  int get totalSize => files.fold(0, (sum, file) => sum + file.size);
+}
+
+class IncomingTransferFile {
+  const IncomingTransferFile({
+    required this.id,
+    required this.name,
+    required this.size,
+  });
+
+  final String id;
+  final String name;
+  final int size;
+}
+
 class _ReceiveSession {
-  const _ReceiveSession({
+  _ReceiveSession({
     required this.sessionId,
     required this.senderAlias,
     required this.senderFingerprint,
@@ -362,10 +519,12 @@ class _ReceiveSession {
   final String senderAlias;
   final String senderFingerprint;
   final Map<String, _IncomingFile> files;
+  final decision = Completer<bool>();
+  bool cancelled = false;
 }
 
 class _IncomingFile {
-  const _IncomingFile({
+  _IncomingFile({
     required this.id,
     required this.name,
     required this.size,
@@ -376,6 +535,7 @@ class _IncomingFile {
   final String name;
   final int size;
   final String token;
+  int received = 0;
 }
 
 class _OutgoingFile {

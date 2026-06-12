@@ -261,4 +261,107 @@ void main() {
       await server.dispose();
     }
   });
+
+  test('LocalSend upload waits for receive confirmation', () async {
+    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final server = LocalSendDiscoveryServer(
+      identity: identity,
+      requireReceiveConfirmation: true,
+    );
+    await server.start();
+    final port = server.boundPort;
+
+    try {
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+
+      final requestFuture = server.incomingRequests.first;
+      final prepareFuture = () async {
+        final prepareRequest = await client.postUrl(
+          Uri.http('127.0.0.1:$port', '/api/localsend/v2/prepare-upload'),
+        );
+        prepareRequest.headers.contentType = ContentType.json;
+        prepareRequest.write(
+          jsonEncode({
+            'info': {
+              'alias': 'LocalSend Peer',
+              'fingerprint': 'peer-fingerprint',
+            },
+            'files': {
+              'file-1': {
+                'id': 'file-1',
+                'fileName': 'confirm.txt',
+                'size': 7,
+                'fileType': 'text/plain',
+              },
+            },
+          }),
+        );
+        return prepareRequest.close();
+      }();
+
+      final incoming = await requestFuture;
+      expect(incoming.senderAlias, 'LocalSend Peer');
+      expect(incoming.files.single.name, 'confirm.txt');
+
+      server.acceptIncomingTransfer(incoming.sessionId);
+      final prepareResponse = await prepareFuture;
+      final prepareBody = jsonDecode(await utf8.decodeStream(prepareResponse));
+
+      expect(prepareResponse.statusCode, HttpStatus.ok);
+      expect(prepareBody['sessionId'], incoming.sessionId);
+      expect(prepareBody['files']['file-1'], isNotEmpty);
+    } finally {
+      await server.dispose();
+    }
+  });
+
+  test('LocalSend upload can be declined before upload starts', () async {
+    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final server = LocalSendDiscoveryServer(
+      identity: identity,
+      requireReceiveConfirmation: true,
+    );
+    await server.start();
+    final port = server.boundPort;
+
+    try {
+      final client = HttpClient();
+      addTearDown(() => client.close(force: true));
+
+      final requestFuture = server.incomingRequests.first;
+      final prepareFuture = () async {
+        final prepareRequest = await client.postUrl(
+          Uri.http('127.0.0.1:$port', '/api/localsend/v2/prepare-upload'),
+        );
+        prepareRequest.headers.contentType = ContentType.json;
+        prepareRequest.write(
+          jsonEncode({
+            'info': {
+              'alias': 'LocalSend Peer',
+              'fingerprint': 'peer-fingerprint',
+            },
+            'files': {
+              'file-1': {
+                'id': 'file-1',
+                'fileName': 'declined.txt',
+                'size': 8,
+                'fileType': 'text/plain',
+              },
+            },
+          }),
+        );
+        return prepareRequest.close();
+      }();
+
+      final incoming = await requestFuture;
+      server.declineIncomingTransfer(incoming.sessionId);
+      final prepareResponse = await prepareFuture;
+      await prepareResponse.drain<void>();
+
+      expect(prepareResponse.statusCode, HttpStatus.forbidden);
+    } finally {
+      await server.dispose();
+    }
+  });
 }

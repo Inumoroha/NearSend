@@ -37,6 +37,8 @@ class NearSendMessage {
     required this.text,
     required this.receivedAt,
     this.attachment,
+    this.sessionId,
+    this.fileId,
   });
 
   final String senderFingerprint;
@@ -44,6 +46,8 @@ class NearSendMessage {
   final String text;
   final DateTime receivedAt;
   final NearSendAttachment? attachment;
+  final String? sessionId;
+  final String? fileId;
 }
 
 extension NearSendPayloadTypeX on NearSendPayloadType {

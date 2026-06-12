@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../models/discovered_device.dart';
 import '../models/nearsend_message.dart';
+import 'localsend_file_transfer.dart';
 import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
 
@@ -12,7 +13,10 @@ class LanDiscoveryService {
     LocalSendIdentity? identity,
     this.multicastGroup = defaultMulticastGroup,
   }) : identity = identity ?? LocalSendIdentity() {
-    _server = LocalSendDiscoveryServer(identity: this.identity);
+    _server = LocalSendDiscoveryServer(
+      identity: this.identity,
+      requireReceiveConfirmation: true,
+    );
   }
 
   static const defaultMulticastGroup = '224.0.0.167';
@@ -28,7 +32,15 @@ class LanDiscoveryService {
 
   Stream<DiscoveredDevice> get devices => _deviceController.stream;
   Stream<NearSendMessage> get messages => _server.messages;
+  Stream<IncomingTransferRequest> get incomingRequests =>
+      _server.incomingRequests;
   int get boundPort => _server.boundPort;
+
+  bool acceptIncomingTransfer(String sessionId) =>
+      _server.acceptIncomingTransfer(sessionId);
+
+  bool declineIncomingTransfer(String sessionId) =>
+      _server.declineIncomingTransfer(sessionId);
 
   Future<List<String>> localConnectEndpoints() async {
     final interfaces = await _networkInterfaces();

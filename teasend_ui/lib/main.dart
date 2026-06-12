@@ -146,6 +146,19 @@ void _applyPalette(_ThemePalette palette) {
   _chatBg = palette.chatBg;
 }
 
+String formatBytes(int size) {
+  if (size <= 0) return '未知大小';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  var value = size.toDouble();
+  var index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index++;
+  }
+  final digits = index == 0 || value >= 10 ? 0 : 1;
+  return '${value.toStringAsFixed(digits)} ${units[index]}';
+}
+
 class _SoftAppear extends StatelessWidget {
   const _SoftAppear({
     super.key,
@@ -333,6 +346,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   int _lastClipboardSequence = 0;
   StreamSubscription<DiscoveredDevice>? _discoverySubscription;
   StreamSubscription<NearSendMessage>? _messageSubscription;
+  StreamSubscription<IncomingTransferRequest>? _incomingTransferSubscription;
   bool _isScanning = false;
   bool _messageSelectionMode = false;
   bool _showDeviceDetails = false;
@@ -353,6 +367,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   // the conversation list. Ignored on wide layouts which show both side by side.
   bool _mobileChatOpen = false;
   final Set<String> _selectedMessageIds = {};
+  final Map<String, IncomingTransferRequest> _incomingTransferRequests = {};
+  final List<TransferTask> _transferTasks = [];
 
   final List<Conversation> _conversations = [];
 
@@ -413,6 +429,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _discoverySubscription = _discoveryService.devices.listen(_upsertDevice);
       _messageSubscription = _discoveryService.messages.listen(
         (message) => unawaited(_handleIncomingMessage(message)),
+      );
+      _incomingTransferSubscription = _discoveryService.incomingRequests.listen(
+        _handleIncomingTransferRequest,
       );
       unawaited(_startDiscovery());
     } else {
@@ -475,6 +494,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     unawaited(AndroidPlatform.releaseMulticastLock());
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
+    unawaited(_incomingTransferSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
     unawaited(_discoveryService.dispose());
     _controller.dispose();
@@ -830,6 +850,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (!mounted) return;
     if (attachment != null) {
       unawaited(_recordReceiveHistory(message.senderAlias, attachment));
+      _markIncomingFileReceived(message, attachment);
     }
     final chatMessage = ChatMessage(
       message.text,
@@ -862,6 +883,100 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
     unawaited(_saveConversations());
     _scrollToBottom();
+  }
+
+  void _handleIncomingTransferRequest(IncomingTransferRequest request) {
+    if (!mounted) return;
+    setState(() {
+      _incomingTransferRequests[request.sessionId] = request;
+      _upsertTransferTask(
+        TransferTask.incomingRequest(
+          id: request.sessionId,
+          peerAlias: request.senderAlias,
+          fileName: request.files.length == 1
+              ? request.files.first.name
+              : '${request.files.length} 个文件',
+          fileCount: request.files.length,
+          totalBytes: request.totalSize,
+        ),
+        notify: false,
+      );
+      _activeSection = _MainSection.transfers;
+    });
+    _showToast('${request.senderAlias} 请求发送 ${request.files.length} 个文件');
+  }
+
+  void _acceptIncomingTransfer(String sessionId) {
+    final request = _incomingTransferRequests.remove(sessionId);
+    if (request == null) return;
+    final accepted = _discoveryService.acceptIncomingTransfer(sessionId);
+    setState(() {
+      _upsertTransferTask(
+        TransferTask.incomingRequest(
+          id: sessionId,
+          peerAlias: request.senderAlias,
+          fileName: request.files.length == 1
+              ? request.files.first.name
+              : '${request.files.length} 个文件',
+          fileCount: request.files.length,
+          totalBytes: request.totalSize,
+        ).copyWith(
+          status: accepted
+              ? TransferTaskStatus.transferring
+              : TransferTaskStatus.failed,
+          subtitle: accepted ? '等待对方上传' : '请求已失效',
+        ),
+        notify: false,
+      );
+    });
+  }
+
+  void _declineIncomingTransfer(String sessionId) {
+    final request = _incomingTransferRequests.remove(sessionId);
+    if (request == null) return;
+    _discoveryService.declineIncomingTransfer(sessionId);
+    setState(() {
+      _upsertTransferTask(
+        TransferTask.incomingRequest(
+          id: sessionId,
+          peerAlias: request.senderAlias,
+          fileName: request.files.length == 1
+              ? request.files.first.name
+              : '${request.files.length} 个文件',
+          fileCount: request.files.length,
+          totalBytes: request.totalSize,
+        ).copyWith(
+          status: TransferTaskStatus.cancelled,
+          progress: 1,
+          subtitle: '已拒绝',
+        ),
+        notify: false,
+      );
+    });
+  }
+
+  void _markIncomingFileReceived(
+    NearSendMessage message,
+    MessageAttachment attachment,
+  ) {
+    final sessionId = message.sessionId;
+    if (sessionId == null) return;
+    final index = _transferTasks.indexWhere((item) => item.id == sessionId);
+    if (index == -1) return;
+    final task = _transferTasks[index];
+    final nextReceived = (task.receivedFiles + 1).clamp(0, task.fileCount);
+    final complete = nextReceived >= task.fileCount;
+    _incomingTransferRequests.remove(sessionId);
+    _upsertTransferTask(
+      task.copyWith(
+        receivedFiles: nextReceived,
+        progress: complete ? 1 : (nextReceived / task.fileCount),
+        status: complete
+            ? TransferTaskStatus.completed
+            : TransferTaskStatus.transferring,
+        subtitle: complete ? '已接收：${attachment.name}' : '正在接收',
+      ),
+    );
   }
 
   Future<MessageAttachment?> _incomingAttachment(
@@ -1485,19 +1600,52 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final handle = TransferHandle();
     _transferHandles[message.id] = handle;
     _updateMessageProgress(message.id, 0);
+    _upsertTransferTask(
+      TransferTask.outgoing(
+        id: message.id,
+        peerAlias: target.alias,
+        fileName: attachment.name,
+        fileCount: 1,
+        totalBytes: attachment.size,
+      ),
+    );
     try {
       await _localSendTransfer.sendFile(
         target: target,
         path: attachment.path,
         handle: handle,
-        onProgress: (sent, total) =>
-            _updateMessageProgress(message.id, total == 0 ? 0 : sent / total),
+        onProgress: (sent, total) {
+          final progress = total == 0 ? 0.0 : sent / total;
+          _updateMessageProgress(message.id, progress);
+          _updateTransferTask(
+            message.id,
+            progress: progress,
+            status: TransferTaskStatus.transferring,
+            subtitle: '${formatBytes(sent)} / ${formatBytes(total)}',
+          );
+        },
       );
       _updateMessageStatus(message.id, MessageSendStatus.sent);
+      _updateTransferTask(
+        message.id,
+        progress: 1,
+        status: TransferTaskStatus.completed,
+        subtitle: '发送完成',
+      );
     } on TransferCancelledException {
       _updateMessageStatus(message.id, MessageSendStatus.cancelled);
+      _updateTransferTask(
+        message.id,
+        status: TransferTaskStatus.cancelled,
+        subtitle: '已取消',
+      );
     } catch (_) {
       _updateMessageStatus(message.id, MessageSendStatus.failed);
+      _updateTransferTask(
+        message.id,
+        status: TransferTaskStatus.failed,
+        subtitle: '发送失败',
+      );
       _appendSystemMessage('文件发送失败：对方可能拒绝接收、需要 PIN，或网络不可达。');
     } finally {
       _transferHandles.remove(message.id);
@@ -1607,8 +1755,53 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
+  void _upsertTransferTask(TransferTask task, {bool notify = true}) {
+    void apply() {
+      final index = _transferTasks.indexWhere((item) => item.id == task.id);
+      if (index == -1) {
+        _transferTasks.insert(0, task);
+      } else {
+        _transferTasks[index] = task;
+      }
+    }
+
+    if (!notify || !mounted) {
+      apply();
+      return;
+    }
+    setState(apply);
+  }
+
+  void _updateTransferTask(
+    String id, {
+    double? progress,
+    TransferTaskStatus? status,
+    String? subtitle,
+    int? receivedFiles,
+  }) {
+    if (!mounted) return;
+    setState(() {
+      final index = _transferTasks.indexWhere((item) => item.id == id);
+      if (index == -1) return;
+      _transferTasks[index] = _transferTasks[index].copyWith(
+        progress: progress,
+        status: status,
+        subtitle: subtitle,
+        receivedFiles: receivedFiles,
+      );
+    });
+  }
+
   void _cancelTransfer(String messageId) {
-    _transferHandles[messageId]?.cancel();
+    final handle = _transferHandles[messageId];
+    if (handle == null) return;
+    handle.cancel();
+    unawaited(_localSendTransfer.cancelRemote(handle));
+    _updateTransferTask(
+      messageId,
+      status: TransferTaskStatus.cancelled,
+      subtitle: '正在取消',
+    );
   }
 
   void _enterMessageSelectionMode() {
@@ -1794,6 +1987,16 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void _showChatsSection() {
     setState(() {
       _activeSection = _MainSection.chats;
+    });
+  }
+
+  void _showTransfersSection() {
+    setState(() {
+      _activeSection = _MainSection.transfers;
+      _messageSelectionMode = false;
+      _showDeviceDetails = false;
+      _selectedMessageIds.clear();
+      _mobileChatOpen = false;
     });
   }
 
@@ -1992,19 +2195,52 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final handle = TransferHandle();
     _transferHandles[message.id] = handle;
     _updateMessageProgress(message.id, 0);
+    _upsertTransferTask(
+      TransferTask.outgoing(
+        id: message.id,
+        peerAlias: device.alias,
+        fileName: attachment.name,
+        fileCount: 1,
+        totalBytes: attachment.size,
+      ),
+    );
     try {
       await _localSendTransfer.sendFile(
         target: device,
         path: path,
         handle: handle,
-        onProgress: (sent, total) =>
-            _updateMessageProgress(message.id, total == 0 ? 0 : sent / total),
+        onProgress: (sent, total) {
+          final progress = total == 0 ? 0.0 : sent / total;
+          _updateMessageProgress(message.id, progress);
+          _updateTransferTask(
+            message.id,
+            progress: progress,
+            status: TransferTaskStatus.transferring,
+            subtitle: '${formatBytes(sent)} / ${formatBytes(total)}',
+          );
+        },
       );
       _updateMessageStatus(message.id, MessageSendStatus.sent);
+      _updateTransferTask(
+        message.id,
+        progress: 1,
+        status: TransferTaskStatus.completed,
+        subtitle: '发送完成',
+      );
     } on TransferCancelledException {
       _updateMessageStatus(message.id, MessageSendStatus.cancelled);
+      _updateTransferTask(
+        message.id,
+        status: TransferTaskStatus.cancelled,
+        subtitle: '已取消',
+      );
     } catch (_) {
       _updateMessageStatus(message.id, MessageSendStatus.failed);
+      _updateTransferTask(
+        message.id,
+        status: TransferTaskStatus.failed,
+        subtitle: '发送失败',
+      );
     } finally {
       _transferHandles.remove(message.id);
     }
@@ -2098,6 +2334,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
               deviceAlias: _discoveryService.identity.alias,
               onShowDeviceInfo: _showDeviceInfoDialog,
               onChats: _showChatsSection,
+              onTransfers: _showTransfersSection,
               onTheme: _showThemeSection,
               onSettings: _showSettingsSection,
               onHistory: _showHistorySection,
@@ -2114,6 +2351,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                   deviceAlias: _discoveryService.identity.alias,
                   onShowDeviceInfo: _showDeviceInfoDialog,
                   onChats: _showChatsSection,
+                  onTransfers: _showTransfersSection,
                   onTheme: _showThemeSection,
                   onSettings: _showSettingsSection,
                   onHistory: _showHistorySection,
@@ -2136,6 +2374,17 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onOpenFolder: _openHistoryFolder,
                     onDelete: _deleteHistoryEntry,
                     onClear: _clearReceiveHistory,
+                    onMenu: showDrawer ? _openNavDrawer : null,
+                  ),
+                )
+              else if (_activeSection == _MainSection.transfers)
+                Expanded(
+                  child: TransfersPage(
+                    tasks: _transferTasks,
+                    incomingRequests: _incomingTransferRequests,
+                    onAccept: _acceptIncomingTransfer,
+                    onDecline: _declineIncomingTransfer,
+                    onCancel: _cancelTransfer,
                     onMenu: showDrawer ? _openNavDrawer : null,
                   ),
                 )
@@ -2191,9 +2440,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                             final fingerprint = _networkConversationKeys[index];
                             final conversation =
                                 _deviceConversations[fingerprint];
-                            if (conversation != null && conversation.unread != 0) {
-                              _deviceConversations[fingerprint] =
-                                  conversation.copyWith(unread: 0);
+                            if (conversation != null &&
+                                conversation.unread != 0) {
+                              _deviceConversations[fingerprint] = conversation
+                                  .copyWith(unread: 0);
                             }
                           } else {
                             final conversationIndex =
@@ -2288,6 +2538,7 @@ class _Sidebar extends StatelessWidget {
     required this.deviceAlias,
     required this.onShowDeviceInfo,
     required this.onChats,
+    required this.onTransfers,
     required this.onTheme,
     required this.onSettings,
     required this.onHistory,
@@ -2297,6 +2548,7 @@ class _Sidebar extends StatelessWidget {
   final String deviceAlias;
   final VoidCallback onShowDeviceInfo;
   final VoidCallback onChats;
+  final VoidCallback onTransfers;
   final VoidCallback onTheme;
   final VoidCallback onSettings;
   final VoidCallback onHistory;
@@ -2346,6 +2598,12 @@ class _Sidebar extends StatelessWidget {
             tooltip: '消息',
             onPressed: onChats,
           ),
+          _NavIcon(
+            icon: Icons.sync_alt_rounded,
+            active: activeSection == _MainSection.transfers,
+            tooltip: '传输',
+            onPressed: onTransfers,
+          ),
           const _NavIcon(icon: Icons.devices_rounded, tooltip: '设备'),
           const _NavIcon(icon: Icons.star_rounded, tooltip: '收藏'),
           _NavIcon(
@@ -2381,6 +2639,7 @@ class _NavDrawer extends StatelessWidget {
     required this.deviceAlias,
     required this.onShowDeviceInfo,
     required this.onChats,
+    required this.onTransfers,
     required this.onTheme,
     required this.onSettings,
     required this.onHistory,
@@ -2390,6 +2649,7 @@ class _NavDrawer extends StatelessWidget {
   final String deviceAlias;
   final VoidCallback onShowDeviceInfo;
   final VoidCallback onChats;
+  final VoidCallback onTransfers;
   final VoidCallback onTheme;
   final VoidCallback onSettings;
   final VoidCallback onHistory;
@@ -2445,6 +2705,12 @@ class _NavDrawer extends StatelessWidget {
               label: '消息',
               active: activeSection == _MainSection.chats,
               onTap: () => _select(context, onChats),
+            ),
+            _NavDrawerItem(
+              icon: Icons.sync_alt_rounded,
+              label: '传输',
+              active: activeSection == _MainSection.transfers,
+              onTap: () => _select(context, onTransfers),
             ),
             _NavDrawerItem(
               icon: Icons.history_rounded,
@@ -2508,7 +2774,7 @@ class _NavDrawerItem extends StatelessWidget {
   }
 }
 
-enum _MainSection { chats, theme, settings, history }
+enum _MainSection { chats, transfers, theme, settings, history }
 
 enum _ConversationMenuAction { rename, clear, delete }
 
@@ -3540,6 +3806,303 @@ class _SettingsSwitchCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class TransfersPage extends StatelessWidget {
+  const TransfersPage({
+    super.key,
+    required this.tasks,
+    required this.incomingRequests,
+    required this.onAccept,
+    required this.onDecline,
+    required this.onCancel,
+    this.onMenu,
+  });
+
+  final List<TransferTask> tasks;
+  final Map<String, IncomingTransferRequest> incomingRequests;
+  final ValueChanged<String> onAccept;
+  final ValueChanged<String> onDecline;
+  final ValueChanged<String> onCancel;
+  final VoidCallback? onMenu;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: _chatBg,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: 74,
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            decoration: BoxDecoration(
+              color: _surface,
+              border: Border(bottom: BorderSide(color: _line)),
+            ),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                if (onMenu != null) ...[
+                  _PageMenuButton(onPressed: onMenu!),
+                  const SizedBox(width: 8),
+                ],
+                Text(
+                  '传输任务',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: tasks.isEmpty
+                ? Center(
+                    child: Text(
+                      '暂无传输任务',
+                      style: TextStyle(color: _muted, fontSize: 14),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
+                    itemCount: tasks.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) {
+                      final task = tasks[index];
+                      return TransferTaskCard(
+                        task: task,
+                        request: incomingRequests[task.id],
+                        onAccept: () => onAccept(task.id),
+                        onDecline: () => onDecline(task.id),
+                        onCancel: () => onCancel(task.id),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class TransferTaskCard extends StatelessWidget {
+  const TransferTaskCard({
+    super.key,
+    required this.task,
+    this.request,
+    required this.onAccept,
+    required this.onDecline,
+    required this.onCancel,
+  });
+
+  final TransferTask task;
+  final IncomingTransferRequest? request;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isWaiting = task.status == TransferTaskStatus.waiting;
+    final canCancel =
+        task.direction == TransferTaskDirection.outgoing &&
+        task.status == TransferTaskStatus.transferring;
+    final progress = task.progress;
+
+    return ShadCard(
+      padding: const EdgeInsets.all(16),
+      backgroundColor: _surface,
+      radius: BorderRadius.circular(8),
+      border: ShadBorder.all(color: _line, width: 1),
+      shadows: const [],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _accentSoft,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(_iconForTask(task), color: _accent, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _text,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_directionLabel(task)} · ${task.peerAlias} · ${formatBytes(task.totalBytes)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: _muted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              _TransferStatusBadge(status: task.status),
+            ],
+          ),
+          if (request != null && isWaiting) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final file in request!.files.take(4))
+                  _TransferFileChip(name: file.name, size: file.size),
+                if (request!.files.length > 4)
+                  _TransferFileChip(
+                    name: '+${request!.files.length - 4} 个文件',
+                    size: 0,
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 14),
+          ShadProgress(
+            value: progress,
+            minHeight: 6,
+            color: _accent,
+            backgroundColor: _accentSoft,
+            borderRadius: const BorderRadius.all(Radius.circular(999)),
+            innerBorderRadius: const BorderRadius.all(Radius.circular(999)),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  task.subtitle ?? _statusLabel(task.status),
+                  style: TextStyle(color: _muted, fontSize: 12),
+                ),
+              ),
+              if (isWaiting) ...[
+                ShadButton.ghost(
+                  onPressed: onDecline,
+                  height: 34,
+                  foregroundColor: _muted,
+                  hoverForegroundColor: _text,
+                  child: const Text('拒绝'),
+                ),
+                const SizedBox(width: 8),
+                ShadButton(
+                  onPressed: onAccept,
+                  height: 34,
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.white,
+                  hoverForegroundColor: Colors.white,
+                  child: const Text('接收'),
+                ),
+              ] else if (canCancel)
+                ShadButton.outline(
+                  onPressed: onCancel,
+                  height: 34,
+                  foregroundColor: const Color(0xFFC85D4D),
+                  child: const Text('取消'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _iconForTask(TransferTask task) {
+    return switch (task.direction) {
+      TransferTaskDirection.incoming => Icons.call_received_rounded,
+      TransferTaskDirection.outgoing => Icons.call_made_rounded,
+    };
+  }
+
+  String _directionLabel(TransferTask task) {
+    return switch (task.direction) {
+      TransferTaskDirection.incoming => '接收',
+      TransferTaskDirection.outgoing => '发送',
+    };
+  }
+}
+
+class _TransferStatusBadge extends StatelessWidget {
+  const _TransferStatusBadge({required this.status});
+
+  final TransferTaskStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (status) {
+      TransferTaskStatus.waiting => _warning,
+      TransferTaskStatus.transferring => _accent,
+      TransferTaskStatus.completed => const Color(0xFF27A95D),
+      TransferTaskStatus.failed => const Color(0xFFC85D4D),
+      TransferTaskStatus.cancelled => _muted,
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        _statusLabel(status),
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _TransferFileChip extends StatelessWidget {
+  const _TransferFileChip({required this.name, required this.size});
+
+  final String name;
+  final int size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: _accentSoft,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        size <= 0 ? name : '$name · ${formatBytes(size)}',
+        style: TextStyle(color: _text, fontSize: 12),
+      ),
+    );
+  }
+}
+
+String _statusLabel(TransferTaskStatus status) {
+  return switch (status) {
+    TransferTaskStatus.waiting => '待确认',
+    TransferTaskStatus.transferring => '传输中',
+    TransferTaskStatus.completed => '已完成',
+    TransferTaskStatus.failed => '失败',
+    TransferTaskStatus.cancelled => '已取消',
+  };
 }
 
 class HistoryPage extends StatelessWidget {
@@ -6502,6 +7065,95 @@ class ChatMessage {
 }
 
 enum MessageSendStatus { none, sending, sent, failed, cancelled }
+
+enum TransferTaskDirection { incoming, outgoing }
+
+enum TransferTaskStatus { waiting, transferring, completed, failed, cancelled }
+
+class TransferTask {
+  const TransferTask({
+    required this.id,
+    required this.direction,
+    required this.status,
+    required this.peerAlias,
+    required this.fileName,
+    required this.fileCount,
+    required this.totalBytes,
+    this.progress,
+    this.subtitle,
+    this.receivedFiles = 0,
+  });
+
+  factory TransferTask.outgoing({
+    required String id,
+    required String peerAlias,
+    required String fileName,
+    required int fileCount,
+    required int totalBytes,
+  }) {
+    return TransferTask(
+      id: id,
+      direction: TransferTaskDirection.outgoing,
+      status: TransferTaskStatus.transferring,
+      peerAlias: peerAlias,
+      fileName: fileName,
+      fileCount: fileCount,
+      totalBytes: totalBytes,
+      progress: 0,
+      subtitle: '准备发送',
+    );
+  }
+
+  factory TransferTask.incomingRequest({
+    required String id,
+    required String peerAlias,
+    required String fileName,
+    required int fileCount,
+    required int totalBytes,
+  }) {
+    return TransferTask(
+      id: id,
+      direction: TransferTaskDirection.incoming,
+      status: TransferTaskStatus.waiting,
+      peerAlias: peerAlias,
+      fileName: fileName,
+      fileCount: fileCount,
+      totalBytes: totalBytes,
+      subtitle: '等待确认',
+    );
+  }
+
+  final String id;
+  final TransferTaskDirection direction;
+  final TransferTaskStatus status;
+  final String peerAlias;
+  final String fileName;
+  final int fileCount;
+  final int totalBytes;
+  final double? progress;
+  final String? subtitle;
+  final int receivedFiles;
+
+  TransferTask copyWith({
+    TransferTaskStatus? status,
+    double? progress,
+    String? subtitle,
+    int? receivedFiles,
+  }) {
+    return TransferTask(
+      id: id,
+      direction: direction,
+      status: status ?? this.status,
+      peerAlias: peerAlias,
+      fileName: fileName,
+      fileCount: fileCount,
+      totalBytes: totalBytes,
+      progress: progress ?? this.progress,
+      subtitle: subtitle ?? this.subtitle,
+      receivedFiles: receivedFiles ?? this.receivedFiles,
+    );
+  }
+}
 
 class MessageAttachment {
   MessageAttachment({
