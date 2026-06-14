@@ -38,6 +38,7 @@ class ManualDeviceConnector {
         if (device.fingerprint == identity.fingerprint) {
           throw const ManualConnectException('不能连接当前设备自己');
         }
+        await _registerSelf(device, attempt.path);
         return device;
       }
     }
@@ -83,6 +84,39 @@ class ManualDeviceConnector {
       );
     } catch (_) {
       return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _registerSelf(
+    DiscoveredDevice device,
+    String infoPath,
+  ) async {
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
+    client.badCertificateCallback = (_, _, _) => true;
+    final registerPath = infoPath.contains('/v1/')
+        ? '/api/localsend/v1/register'
+        : '/api/localsend/v2/register';
+
+    try {
+      final request = await client.postUrl(
+        Uri(
+          scheme: device.https ? 'https' : 'http',
+          host: device.ip,
+          port: device.port,
+          path: registerPath,
+        ),
+      );
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(identity.registerJson()));
+      final response = await request.close().timeout(
+        const Duration(seconds: 3),
+      );
+      await response.drain<void>();
+    } catch (_) {
+      // Local manual connect still succeeds even when the peer does not accept
+      // register; the user can retry from the other side or rely on discovery.
     } finally {
       client.close(force: true);
     }

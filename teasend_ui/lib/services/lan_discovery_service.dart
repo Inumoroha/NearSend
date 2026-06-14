@@ -12,10 +12,12 @@ class LanDiscoveryService {
   LanDiscoveryService({
     LocalSendIdentity? identity,
     this.multicastGroup = defaultMulticastGroup,
+    bool Function(String senderFingerprint)? shouldConfirmIncoming,
   }) : identity = identity ?? LocalSendIdentity() {
     _server = LocalSendDiscoveryServer(
       identity: this.identity,
       requireReceiveConfirmation: true,
+      shouldConfirmIncoming: shouldConfirmIncoming,
     );
   }
 

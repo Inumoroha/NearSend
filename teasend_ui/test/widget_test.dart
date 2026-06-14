@@ -408,6 +408,8 @@ void main() {
         home: Material(
           child: ConversationTile(
             conversation: conversation,
+            favorite: false,
+            online: true,
             selected: false,
             onTap: () {},
             onContextMenu: (_) {},
@@ -419,6 +421,53 @@ void main() {
     final icon = tester.widget<Icon>(find.byIcon(Icons.wifi_rounded));
     expect(icon.color, const Color(0xFF27A95D));
     expect(find.text('在线'), findsNothing);
+  });
+
+  testWidgets('device conversation shows offline wifi status icon', (
+    WidgetTester tester,
+  ) async {
+    final conversation = Conversation(
+      title: 'Windows PC',
+      subtitle: 'Offline',
+      status: 'Windows offline',
+      time: 'offline',
+      initials: 'W',
+      messages: [],
+      files: [],
+      device: DiscoveredDevice(
+        alias: 'Windows PC',
+        ip: '192.168.1.11',
+        version: '2.1',
+        port: 53317,
+        https: false,
+        fingerprint: 'desktop-id',
+        deviceType: DiscoveredDeviceType.desktop,
+        download: false,
+        lastSeen: DateTime(2026, 6, 9),
+        deviceModel: 'Windows',
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: ConversationTile(
+            conversation: conversation,
+            favorite: false,
+            online: false,
+            selected: false,
+            onTap: () {},
+            onContextMenu: (_) {},
+          ),
+        ),
+      ),
+    );
+
+    final icon = tester.widget<Icon>(
+      find.byIcon(Icons.signal_wifi_connected_no_internet_4_rounded),
+    );
+    expect(icon.color, const Color(0xFF64748B));
+    expect(find.byIcon(Icons.wifi_rounded), findsNothing);
   });
 
   testWidgets('settings page toggles auto save', (WidgetTester tester) async {

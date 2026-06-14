@@ -54,6 +54,9 @@ const _overwriteSameNameFilesPreferenceKey = 'overwrite_same_name_files';
 const _themeModePreferenceKey = 'theme_mode';
 const _themeColorPreferenceKey = 'theme_color';
 const _clipboardAutoSendPreferenceKey = 'clipboard_auto_send_fingerprints';
+const _favoriteDevicesPreferenceKey = 'favorite_device_fingerprints';
+const _deviceOfflineAfter = Duration(seconds: 30);
+const _devicePresenceRefreshInterval = Duration(seconds: 5);
 
 enum AppThemeMode { light, dark }
 
@@ -318,7 +321,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final List<MessageAttachment> _pendingAttachments = [];
   final _clipboardFiles = WindowsClipboardFiles();
   final _nativeWindow = const NativeWindowService();
-  final _discoveryService = LanDiscoveryService();
+  late final _discoveryService = LanDiscoveryService(
+    shouldConfirmIncoming: _shouldConfirmIncomingTransfer,
+  );
   late final _messageClient = NearSendMessageClient(
     identity: _discoveryService.identity,
   );
@@ -342,7 +347,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final _conversationStore = ConversationStore();
   List<ReceiveHistoryEntry> _receiveHistory = [];
   final Set<String> _clipboardAutoSendFingerprints = {};
+  final Set<String> _favoriteDeviceFingerprints = {};
   Timer? _clipboardPollTimer;
+  Timer? _presenceRefreshTimer;
   int _lastClipboardSequence = 0;
   StreamSubscription<DiscoveredDevice>? _discoverySubscription;
   StreamSubscription<NearSendMessage>? _messageSubscription;
@@ -434,6 +441,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         _handleIncomingTransferRequest,
       );
       unawaited(_startDiscovery());
+      _startPresenceRefreshTimer();
     } else {
       setState(() {
         _scanStatus = '测试模式未启动局域网发现';
@@ -491,6 +499,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       unawaited(windowManager.setPreventClose(false));
     }
     _clipboardPollTimer?.cancel();
+    _presenceRefreshTimer?.cancel();
     unawaited(AndroidPlatform.releaseMulticastLock());
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
@@ -546,6 +555,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final autoSendFingerprints =
         preferences.getStringList(_clipboardAutoSendPreferenceKey) ??
         const <String>[];
+    final favoriteFingerprints =
+        preferences.getStringList(_favoriteDevicesPreferenceKey) ??
+        const <String>[];
     _applyPalette(_buildPalette(themeMode, themeColor));
 
     if (enabled && Platform.isWindows) {
@@ -563,9 +575,40 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _clipboardAutoSendFingerprints
         ..clear()
         ..addAll(autoSendFingerprints);
+      _favoriteDeviceFingerprints
+        ..clear()
+        ..addAll(favoriteFingerprints);
       _restoringSettings = false;
     });
     _syncClipboardPolling();
+  }
+
+  bool _shouldConfirmIncomingTransfer(String senderFingerprint) {
+    return !_favoriteDeviceFingerprints.contains(senderFingerprint);
+  }
+
+  Future<void> _setFavoriteDevice(String fingerprint, bool favorite) async {
+    setState(() {
+      if (favorite) {
+        _favoriteDeviceFingerprints.add(fingerprint);
+      } else {
+        _favoriteDeviceFingerprints.remove(fingerprint);
+      }
+    });
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setStringList(
+      _favoriteDevicesPreferenceKey,
+      _favoriteDeviceFingerprints.toList(),
+    );
+    if (!mounted) return;
+    final conversation = _deviceConversations[fingerprint];
+    final name = conversation?.title ?? _devices[fingerprint]?.alias ?? '设备';
+    _showToast(favorite ? '已收藏 $name，将自动接收文件' : '已取消收藏 $name');
+  }
+
+  void _toggleFavoriteDevice(String fingerprint) {
+    final favorite = !_favoriteDeviceFingerprints.contains(fingerprint);
+    unawaited(_setFavoriteDevice(fingerprint, favorite));
   }
 
   Future<void> _setThemeMode(AppThemeMode mode) async {
@@ -672,11 +715,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   @override
-  void onWindowMinimize() {
-    if (_minimizeToTrayEnabled) {
-      unawaited(_hideToTray());
-    }
-  }
+  void onWindowMinimize() {}
 
   @override
   void onWindowClose() {
@@ -721,6 +760,26 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         });
       }
     }
+  }
+
+  bool _isDeviceOnline(DiscoveredDevice device) {
+    return DateTime.now().difference(device.lastSeen) <= _deviceOfflineAfter;
+  }
+
+  bool _isDeviceFingerprintOnline(String fingerprint) {
+    final device = _devices[fingerprint];
+    return device != null && _isDeviceOnline(device);
+  }
+
+  void _startPresenceRefreshTimer() {
+    _presenceRefreshTimer?.cancel();
+    _presenceRefreshTimer = Timer.periodic(
+      _devicePresenceRefreshInterval,
+      (_) {
+        if (!mounted || _devices.isEmpty) return;
+        setState(() {});
+      },
+    );
   }
 
   void _upsertDevice(DiscoveredDevice device) {
@@ -888,7 +947,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void _handleIncomingTransferRequest(IncomingTransferRequest request) {
     if (!mounted) return;
     setState(() {
-      _incomingTransferRequests[request.sessionId] = request;
+      if (request.autoAccepted) {
+        _incomingTransferRequests.remove(request.sessionId);
+      } else {
+        _incomingTransferRequests[request.sessionId] = request;
+      }
       _upsertTransferTask(
         TransferTask.incomingRequest(
           id: request.sessionId,
@@ -898,12 +961,23 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
               : '${request.files.length} 个文件',
           fileCount: request.files.length,
           totalBytes: request.totalSize,
+        ).copyWith(
+          status: request.autoAccepted
+              ? TransferTaskStatus.transferring
+              : TransferTaskStatus.waiting,
+          subtitle: request.autoAccepted ? '收藏设备，正在自动接收' : '等待确认',
         ),
         notify: false,
       );
-      _activeSection = _MainSection.transfers;
+      if (!request.autoAccepted) {
+        _activeSection = _MainSection.transfers;
+      }
     });
-    _showToast('${request.senderAlias} 请求发送 ${request.files.length} 个文件');
+    _showToast(
+      request.autoAccepted
+          ? '正在自动接收 ${request.senderAlias} 的 ${request.files.length} 个文件'
+          : '${request.senderAlias} 请求发送 ${request.files.length} 个文件',
+    );
   }
 
   void _acceptIncomingTransfer(String sessionId) {
@@ -1255,7 +1329,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   MessageSendStatus _outgoingInitialStatus() {
     final fingerprint = _selectedConversationFingerprint;
     if (fingerprint == null) return MessageSendStatus.sent;
-    if (_devices[fingerprint] != null) return MessageSendStatus.sending;
+    if (_isDeviceFingerprintOnline(fingerprint)) {
+      return MessageSendStatus.sending;
+    }
     final conversation = _deviceConversations[fingerprint];
     return conversation?.device != null
         ? MessageSendStatus.failed
@@ -1864,6 +1940,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _showConversationMenu(int index, Offset position) async {
+    final fingerprint = index < _networkConversationCount
+        ? _networkConversationKeys[index]
+        : null;
+    final isFavorite =
+        fingerprint != null && _favoriteDeviceFingerprints.contains(fingerprint);
     final action = await showMenu<_ConversationMenuAction>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -1872,11 +1953,19 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         position.dx,
         position.dy,
       ),
-      items: const [
+      items: [
         PopupMenuItem(
           value: _ConversationMenuAction.rename,
           child: _PopupMenuActionLabel(icon: Icons.edit_rounded, label: '重命名'),
         ),
+        if (fingerprint != null)
+          PopupMenuItem(
+            value: _ConversationMenuAction.favorite,
+            child: _PopupMenuActionLabel(
+              icon: isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
+              label: isFavorite ? '取消收藏' : '收藏设备',
+            ),
+          ),
         PopupMenuItem(
           value: _ConversationMenuAction.clear,
           child: _PopupMenuActionLabel(
@@ -1899,6 +1988,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     switch (action) {
       case _ConversationMenuAction.rename:
         await _renameConversation(index);
+      case _ConversationMenuAction.favorite:
+        if (fingerprint != null) {
+          _toggleFavoriteDevice(fingerprint);
+        }
       case _ConversationMenuAction.clear:
         _clearConversation(index);
       case _ConversationMenuAction.delete:
@@ -2274,7 +2367,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   DiscoveredDevice? get _selectedDevice {
     final fingerprint = _selectedConversationFingerprint;
     if (fingerprint == null) return null;
-    return _devices[fingerprint];
+    final device = _devices[fingerprint];
+    if (device == null || !_isDeviceOnline(device)) return null;
+    return device;
   }
 
   String? get _selectedConversationFingerprint {
@@ -2327,6 +2422,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
     return Scaffold(
       key: _scaffoldKey,
+      resizeToAvoidBottomInset: false,
       backgroundColor: _panel,
       drawer: showDrawer
           ? _NavDrawer(
@@ -2412,6 +2508,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     width: conversationWidth,
                     child: ConversationPanel(
                       conversations: conversations,
+                      favoriteFingerprints: _favoriteDeviceFingerprints,
+                      onlineFingerprints: _devices.entries
+                          .where((entry) => _isDeviceOnline(entry.value))
+                          .map((entry) => entry.key)
+                          .toSet(),
                       isScanning: _isScanning,
                       scanStatus: _scanStatus,
                       selected: _selected,
@@ -2502,6 +2603,20 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                               previewImage: _previewImage,
                               onPreviewImage: _openImagePreview,
                               onClosePreview: _closeImagePreview,
+                              favoriteDevice:
+                                  _selectedConversationFingerprint != null &&
+                                  _favoriteDeviceFingerprints.contains(
+                                    _selectedConversationFingerprint,
+                                  ),
+                              onFavoriteDeviceChanged: (value) {
+                                final fingerprint =
+                                    _selectedConversationFingerprint;
+                                if (fingerprint != null) {
+                                  unawaited(
+                                    _setFavoriteDevice(fingerprint, value),
+                                  );
+                                }
+                              },
                               clipboardAutoSendEnabled:
                                   _clipboardAutoSendFingerprints.contains(
                                     _selectedConversationFingerprint,
@@ -2776,7 +2891,7 @@ class _NavDrawerItem extends StatelessWidget {
 
 enum _MainSection { chats, transfers, theme, settings, history }
 
-enum _ConversationMenuAction { rename, clear, delete }
+enum _ConversationMenuAction { rename, favorite, clear, delete }
 
 /// A label/value row used in the device-info dialog.
 class _DeviceInfoRow extends StatelessWidget {
@@ -4388,6 +4503,8 @@ class ConversationPanel extends StatelessWidget {
   const ConversationPanel({
     super.key,
     required this.conversations,
+    required this.favoriteFingerprints,
+    required this.onlineFingerprints,
     required this.isScanning,
     required this.scanStatus,
     required this.selected,
@@ -4403,6 +4520,8 @@ class ConversationPanel extends StatelessWidget {
   });
 
   final List<Conversation> conversations;
+  final Set<String> favoriteFingerprints;
+  final Set<String> onlineFingerprints;
   final bool isScanning;
   final String scanStatus;
   final int selected;
@@ -4528,6 +4647,16 @@ class ConversationPanel extends StatelessWidget {
                     );
                     final tile = ConversationTile(
                       conversation: conversation,
+                      favorite:
+                          conversation.device != null &&
+                          favoriteFingerprints.contains(
+                            conversation.device!.fingerprint,
+                          ),
+                      online:
+                          conversation.device != null &&
+                          onlineFingerprints.contains(
+                            conversation.device!.fingerprint,
+                          ),
                       selected: selected == index,
                       padded: !swipeEnabled,
                       onTap: () => onSelect(index),
@@ -4715,6 +4844,8 @@ class ConversationTile extends StatelessWidget {
   const ConversationTile({
     super.key,
     required this.conversation,
+    required this.favorite,
+    required this.online,
     required this.selected,
     required this.onTap,
     required this.onContextMenu,
@@ -4722,6 +4853,8 @@ class ConversationTile extends StatelessWidget {
   });
 
   final Conversation conversation;
+  final bool favorite;
+  final bool online;
   final bool selected;
   final VoidCallback onTap;
   final ValueChanged<Offset> onContextMenu;
@@ -4789,10 +4922,22 @@ class ConversationTile extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
+                          if (favorite) ...[
+                            Icon(
+                              Icons.star_rounded,
+                              color: _warning,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 5),
+                          ],
                           if (conversation.device != null)
-                            const Icon(
-                              Icons.wifi_rounded,
-                              color: Color(0xFF27A95D),
+                            Icon(
+                              online
+                                  ? Icons.wifi_rounded
+                                  : Icons.signal_wifi_connected_no_internet_4_rounded,
+                              color: online
+                                  ? const Color(0xFF27A95D)
+                                  : _muted,
                               size: 16,
                             )
                           else
@@ -5109,6 +5254,8 @@ class ChatPanel extends StatelessWidget {
     required this.previewImage,
     required this.onPreviewImage,
     required this.onClosePreview,
+    required this.favoriteDevice,
+    required this.onFavoriteDeviceChanged,
     required this.clipboardAutoSendEnabled,
     required this.onClipboardAutoSendChanged,
     this.onMobileBack,
@@ -5140,11 +5287,16 @@ class ChatPanel extends StatelessWidget {
   final MessageAttachment? previewImage;
   final ValueChanged<MessageAttachment> onPreviewImage;
   final VoidCallback onClosePreview;
+  final bool favoriteDevice;
+  final ValueChanged<bool> onFavoriteDeviceChanged;
   final bool clipboardAutoSendEnabled;
   final ValueChanged<bool> onClipboardAutoSendChanged;
 
   @override
   Widget build(BuildContext context) {
+    final keyboardInset = Platform.isAndroid
+        ? MediaQuery.viewInsetsOf(context).bottom
+        : 0.0;
     return Container(
       margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
       clipBehavior: Clip.antiAlias,
@@ -5187,6 +5339,8 @@ class ChatPanel extends StatelessWidget {
                     duration: const Duration(milliseconds: 260),
                     child: DeviceDetailsPage(
                       conversation: conversation,
+                      favoriteDevice: favoriteDevice,
+                      onFavoriteDeviceChanged: onFavoriteDeviceChanged,
                       clipboardAutoSendEnabled: clipboardAutoSendEnabled,
                       onClipboardAutoSendChanged: onClipboardAutoSendChanged,
                     ),
@@ -5199,7 +5353,12 @@ class ChatPanel extends StatelessWidget {
                     duration: const Duration(milliseconds: 260),
                     child: ListView(
                       controller: scrollController,
-                      padding: const EdgeInsets.all(24),
+                      padding: EdgeInsets.fromLTRB(
+                        24,
+                        24,
+                        24,
+                        24 + keyboardInset,
+                      ),
                       children: [
                         ...conversation.messages.map(
                           (message) => MessageBubble(
@@ -5251,17 +5410,22 @@ class ChatPanel extends StatelessWidget {
                     ),
                   ),
                 ),
-                _SoftAppear(
-                  offset: const Offset(0, 16),
-                  duration: const Duration(milliseconds: 320),
-                  child: Composer(
-                    controller: controller,
-                    pendingAttachments: pendingAttachments,
-                    onSend: onSend,
-                    onSendImage: onSendImage,
-                    onSendFile: onSendFile,
-                    onPasteImages: onPasteImages,
-                    onRemovePendingAttachment: onRemovePendingAttachment,
+                AnimatedPadding(
+                  duration: const Duration(milliseconds: 180),
+                  curve: Curves.easeOutCubic,
+                  padding: EdgeInsets.only(bottom: keyboardInset),
+                  child: _SoftAppear(
+                    offset: const Offset(0, 16),
+                    duration: const Duration(milliseconds: 320),
+                    child: Composer(
+                      controller: controller,
+                      pendingAttachments: pendingAttachments,
+                      onSend: onSend,
+                      onSendImage: onSendImage,
+                      onSendFile: onSendFile,
+                      onPasteImages: onPasteImages,
+                      onRemovePendingAttachment: onRemovePendingAttachment,
+                    ),
                   ),
                 ),
               ],
@@ -5517,11 +5681,15 @@ class DeviceDetailsPage extends StatelessWidget {
   const DeviceDetailsPage({
     super.key,
     required this.conversation,
+    required this.favoriteDevice,
+    required this.onFavoriteDeviceChanged,
     required this.clipboardAutoSendEnabled,
     required this.onClipboardAutoSendChanged,
   });
 
   final Conversation conversation;
+  final bool favoriteDevice;
+  final ValueChanged<bool> onFavoriteDeviceChanged;
   final bool clipboardAutoSendEnabled;
   final ValueChanged<bool> onClipboardAutoSendChanged;
 
@@ -5565,6 +5733,14 @@ class DeviceDetailsPage extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 28),
+                _DeviceSwitchCard(
+                  icon: Icons.star_rounded,
+                  title: '收藏设备',
+                  description: '收藏后，此设备发来的文件会自动接收，不再弹出确认或拒绝。',
+                  enabled: favoriteDevice,
+                  onChanged: onFavoriteDeviceChanged,
+                ),
+                const SizedBox(height: 14),
                 _DeviceAutoSendCard(
                   enabled: clipboardAutoSendEnabled,
                   onChanged: onClipboardAutoSendChanged,
@@ -5657,6 +5833,76 @@ class _DeviceAutoSendCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     '截屏并复制到剪贴板后，自动把图片发送到此设备',
+                    style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Switch(
+              value: enabled,
+              activeThumbColor: _accent,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DeviceSwitchCard extends StatelessWidget {
+  const _DeviceSwitchCard({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: _accentSoft,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, color: _accent, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: _text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
                     style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
                   ),
                 ],

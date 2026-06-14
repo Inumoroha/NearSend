@@ -83,6 +83,13 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_SIZE:
+      if (minimize_to_tray_enabled_ && wparam == SIZE_MINIMIZED) {
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+      }
+      break;
+
     case WM_CLOSE:
       if (minimize_to_tray_enabled_) {
         ShowWindow(hwnd, SW_HIDE);

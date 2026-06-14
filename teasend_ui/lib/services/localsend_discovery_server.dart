@@ -11,10 +11,12 @@ class LocalSendDiscoveryServer {
   LocalSendDiscoveryServer({
     required this.identity,
     bool requireReceiveConfirmation = false,
+    bool Function(String senderFingerprint)? shouldConfirmIncoming,
   }) {
     _fileTransfer = LocalSendFileTransferService(
       identity: identity,
       requireReceiveConfirmation: requireReceiveConfirmation,
+      shouldConfirmIncoming: shouldConfirmIncoming,
     );
   }
 

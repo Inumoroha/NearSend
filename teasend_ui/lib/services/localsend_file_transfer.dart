@@ -47,10 +47,12 @@ class LocalSendFileTransferService {
   LocalSendFileTransferService({
     required this.identity,
     this.requireReceiveConfirmation = false,
+    this.shouldConfirmIncoming,
   });
 
   final LocalSendIdentity identity;
   final bool requireReceiveConfirmation;
+  final bool Function(String senderFingerprint)? shouldConfirmIncoming;
   final _incomingController = StreamController<NearSendMessage>.broadcast();
   final _requestController =
       StreamController<IncomingTransferRequest>.broadcast();
@@ -111,23 +113,28 @@ class LocalSendFileTransferService {
       files: files,
     );
 
-    if (requireReceiveConfirmation) {
-      _requestController.add(
-        IncomingTransferRequest(
-          sessionId: sessionId,
-          senderAlias: senderAlias,
-          senderFingerprint: senderFingerprint,
-          files: files.values
-              .map(
-                (file) => IncomingTransferFile(
-                  id: file.id,
-                  name: file.name,
-                  size: file.size,
-                ),
-              )
-              .toList(),
-        ),
-      );
+    final requiresConfirmation =
+        shouldConfirmIncoming?.call(senderFingerprint) ??
+        requireReceiveConfirmation;
+
+    final incomingRequest = IncomingTransferRequest(
+      sessionId: sessionId,
+      senderAlias: senderAlias,
+      senderFingerprint: senderFingerprint,
+      files: files.values
+          .map(
+            (file) => IncomingTransferFile(
+              id: file.id,
+              name: file.name,
+              size: file.size,
+            ),
+          )
+          .toList(),
+      autoAccepted: !requiresConfirmation,
+    );
+
+    if (requiresConfirmation) {
+      _requestController.add(incomingRequest);
       final accepted = await _sessions[sessionId]!.decision.future.timeout(
         const Duration(minutes: 2),
         onTimeout: () => false,
@@ -136,6 +143,8 @@ class LocalSendFileTransferService {
         _sessions.remove(sessionId);
         throw const TransferDeclinedException();
       }
+    } else {
+      _requestController.add(incomingRequest);
     }
 
     return {'sessionId': sessionId, 'files': responseFiles};
@@ -485,12 +494,14 @@ class IncomingTransferRequest {
     required this.senderAlias,
     required this.senderFingerprint,
     required this.files,
+    this.autoAccepted = false,
   });
 
   final String sessionId;
   final String senderAlias;
   final String senderFingerprint;
   final List<IncomingTransferFile> files;
+  final bool autoAccepted;
 
   int get totalSize => files.fold(0, (sum, file) => sum + file.size);
 }
