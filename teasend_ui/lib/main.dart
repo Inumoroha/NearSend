@@ -55,7 +55,7 @@ const _themeModePreferenceKey = 'theme_mode';
 const _themeColorPreferenceKey = 'theme_color';
 const _clipboardAutoSendPreferenceKey = 'clipboard_auto_send_fingerprints';
 const _favoriteDevicesPreferenceKey = 'favorite_device_fingerprints';
-const _deviceOfflineAfter = Duration(seconds: 30);
+const _deviceOfflineAfter = Duration(seconds: 120);
 const _devicePresenceRefreshInterval = Duration(seconds: 5);
 
 enum AppThemeMode { light, dark }
@@ -795,10 +795,29 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final selectedKey = _selectionKeyAt(_selected);
     setState(() {
       _devices[device.fingerprint] = device;
-      _deviceConversations.putIfAbsent(
-        device.fingerprint,
-        () => _deviceConversation(device),
-      );
+      final existing = _deviceConversations[device.fingerprint];
+      if (existing == null || existing.device == null) {
+        // 如果会话不存在或没有设备信息，创建新的会话（包含设备信息）
+        _deviceConversations.putIfAbsent(
+          device.fingerprint,
+          () => _deviceConversation(device),
+        );
+      } else {
+        // 如果会话已存在且有设备信息，只更新设备信息（保留消息历史）
+        _deviceConversations[device.fingerprint] = Conversation(
+          title: device.alias,
+          subtitle: '${device.displayModel} · ${device.endpoint}',
+          status:
+              '${device.deviceType.label} 在线 · LocalSend ${device.version} · ${device.ip}:${device.port}',
+          time: existing.time,
+          initials: device.initials,
+          messages: existing.messages,
+          files: existing.files,
+          unread: existing.unread,
+          device: device,
+          ephemeral: existing.ephemeral,
+        );
+      }
       _scanStatus = '已发现 ${_devices.length} 台设备';
       _selected = _indexForSelectionKey(selectedKey);
       if (_selected < 0 || _selected >= _visibleConversations.length) {
@@ -1638,16 +1657,20 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
   Future<void> _sendNetworkMessage(ChatMessage message) async {
     final target = _selectedDevice;
-    if (target == null) return;
+    if (target == null) {
+      _updateMessageStatus(message.id, MessageSendStatus.failed);
+      _appendSystemMessage('无法发送：设备信息缺失，请尝试刷新设备列表或重新连接。');
+      return;
+    }
 
     final attachment = message.attachment;
     if (attachment == null) {
       try {
         await _messageClient.sendText(target: target, text: message.text);
         _updateMessageStatus(message.id, MessageSendStatus.sent);
-      } catch (_) {
+      } catch (e) {
         _updateMessageStatus(message.id, MessageSendStatus.failed);
-        _appendSystemMessage('文字发送失败：对方需要支持 NearSend 消息接口。');
+        _appendSystemMessage('文字发送失败：对方需要支持 NearSend 消息接口，或网络不可达。\n设备地址：${target.endpoint}');
       }
       return;
     }
@@ -1945,6 +1968,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         : null;
     final isFavorite =
         fingerprint != null && _favoriteDeviceFingerprints.contains(fingerprint);
+
+    // Build the menu items with current theme
+    final isDark = _themeMode == AppThemeMode.dark;
+    final menuColor = isDark ? const Color(0xFF1F2937) : const Color(0xFFFFFFFF);
+    final lineColor = isDark ? const Color(0xFF374151) : const Color(0xFFE2E8F0);
+    final textColor = isDark ? const Color(0xFFF9FAFB) : const Color(0xFF1F2937);
+
     final action = await showMenu<_ConversationMenuAction>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -1956,32 +1986,44 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       items: [
         PopupMenuItem(
           value: _ConversationMenuAction.rename,
-          child: _PopupMenuActionLabel(icon: Icons.edit_rounded, label: '重命名'),
+          child: _MenuItemWithColor(
+            icon: Icons.edit_rounded,
+            label: '重命名',
+            color: textColor,
+          ),
         ),
         if (fingerprint != null)
           PopupMenuItem(
             value: _ConversationMenuAction.favorite,
-            child: _PopupMenuActionLabel(
+            child: _MenuItemWithColor(
               icon: isFavorite ? Icons.star_rounded : Icons.star_border_rounded,
               label: isFavorite ? '取消收藏' : '收藏设备',
+              color: textColor,
             ),
           ),
         PopupMenuItem(
           value: _ConversationMenuAction.clear,
-          child: _PopupMenuActionLabel(
+          child: _MenuItemWithColor(
             icon: Icons.cleaning_services_rounded,
             label: '清空会话',
+            color: textColor,
           ),
         ),
         PopupMenuItem(
           value: _ConversationMenuAction.delete,
-          child: _PopupMenuActionLabel(
+          child: _MenuItemWithColor(
             icon: Icons.delete_outline_rounded,
             label: '删除会话',
-            danger: true,
+            color: const Color(0xFFC85D4D),
           ),
         ),
       ],
+      color: menuColor,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: lineColor),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      elevation: 10,
     );
     if (action == null || !mounted) return;
 
@@ -2367,9 +2409,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   DiscoveredDevice? get _selectedDevice {
     final fingerprint = _selectedConversationFingerprint;
     if (fingerprint == null) return null;
+    // 尝试从设备列表获取
     final device = _devices[fingerprint];
-    if (device == null || !_isDeviceOnline(device)) return null;
-    return device;
+    if (device != null) return device;
+    // 如果设备列表中没有，尝试从会话中获取缓存的设备信息
+    final conversation = _deviceConversations[fingerprint];
+    return conversation?.device;
   }
 
   String? get _selectedConversationFingerprint {
@@ -2940,7 +2985,7 @@ InputDecoration teaInputDecoration({String? labelText, String? hintText}) {
     labelText: labelText,
     hintText: hintText,
     filled: true,
-    fillColor: const Color(0xFFF8F6F0),
+    fillColor: _panel,
     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
@@ -2957,6 +3002,11 @@ InputDecoration teaInputDecoration({String? labelText, String? hintText}) {
     labelStyle: TextStyle(color: _muted, fontSize: 13),
     hintStyle: TextStyle(color: _sidebarMuted, fontSize: 13),
   );
+}
+
+/// 输入框文本样式，确保暗黑模式下文本可见
+TextStyle teaInputTextStyle() {
+  return TextStyle(color: _text, fontSize: 14);
 }
 
 class TeaDialog extends StatelessWidget {
@@ -3077,7 +3127,32 @@ class _PopupMenuActionLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? const Color(0xFFC85D4D) : _text;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF0F172A);
+    final color = danger ? const Color(0xFFC85D4D) : textColor;
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: color),
+        const SizedBox(width: 10),
+        Text(label, style: TextStyle(color: color, fontSize: 13)),
+      ],
+    );
+  }
+}
+
+class _MenuItemWithColor extends StatelessWidget {
+  const _MenuItemWithColor({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
       children: [
         Icon(icon, size: 17, color: color),
@@ -3144,6 +3219,7 @@ class _TextPromptDialogState extends State<_TextPromptDialog> {
       content: TextField(
         controller: _controller,
         autofocus: true,
+        style: teaInputTextStyle(),
         decoration: teaInputDecoration(hintText: widget.hintText),
         onSubmitted: (_) => _submit(),
       ),
@@ -3213,6 +3289,7 @@ class _DeviceInfoDialogState extends State<_DeviceInfoDialog> {
           TextField(
             controller: _controller,
             autofocus: true,
+            style: teaInputTextStyle(),
             decoration: teaInputDecoration(
               labelText: '设备名称',
               hintText: '其他设备搜索时显示的名称',
@@ -3298,6 +3375,7 @@ class _ManualConnectDialogState extends State<_ManualConnectDialog> {
           TextField(
             controller: _ipController,
             autofocus: true,
+            style: teaInputTextStyle(),
             decoration: teaInputDecoration(
               labelText: '对方 IP 地址',
               hintText: '例如 192.168.1.20',
@@ -3307,6 +3385,7 @@ class _ManualConnectDialogState extends State<_ManualConnectDialog> {
           const SizedBox(height: 12),
           TextField(
             controller: _portController,
+            style: teaInputTextStyle(),
             decoration: teaInputDecoration(
               labelText: '端口号',
               hintText: '默认 53317',
@@ -3760,7 +3839,7 @@ class SettingsPage extends StatelessWidget {
                             alignment: Alignment.centerLeft,
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFF8F6F0),
+                              color: _panel,
                               border: Border.all(color: _line),
                               borderRadius: BorderRadius.circular(8),
                             ),
@@ -3784,7 +3863,7 @@ class SettingsPage extends StatelessWidget {
                                     horizontal: 12,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFF8F6F0),
+                                    color: _panel,
                                     border: Border.all(color: _line),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -6091,7 +6170,7 @@ class MessageBubble extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 18),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: const Color(0xFFEFECE3),
+            color: _panel,
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
@@ -6166,7 +6245,7 @@ class RetrySendButton extends StatelessWidget {
           minimumSize: const Size(30, 30),
           padding: EdgeInsets.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: const Color(0xEEFFFFFF),
+          backgroundColor: _surface,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -6192,7 +6271,7 @@ class CancelTransferButton extends StatelessWidget {
           minimumSize: const Size(30, 30),
           padding: EdgeInsets.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: const Color(0xEEFFFFFF),
+          backgroundColor: _surface,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -6219,7 +6298,7 @@ class TransferProgressBar extends StatelessWidget {
               child: LinearProgressIndicator(
                 value: progress.clamp(0.0, 1.0),
                 color: _accent,
-                backgroundColor: const Color(0xFFEFECE3),
+                backgroundColor: _panel,
               ),
             ),
           ),
@@ -7183,6 +7262,7 @@ class Conversation {
       'time': time,
       'initials': initials,
       'unread': unread,
+      'ephemeral': ephemeral,
       'messages': messages.map((message) => message.toJson()).toList(),
       'files': files.map((file) => file.toJson()).toList(),
       'device': device?.toJson(),
@@ -7198,6 +7278,7 @@ class Conversation {
       time: json['time'] as String? ?? '',
       initials: json['initials'] as String? ?? '?',
       unread: json['unread'] is int ? json['unread'] as int : 0,
+      ephemeral: json['ephemeral'] is bool ? json['ephemeral'] as bool : false,
       messages:
           (json['messages'] as List?)
               ?.whereType<Map<String, dynamic>>()
