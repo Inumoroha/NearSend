@@ -26,6 +26,7 @@ import 'services/manual_device_connector.dart';
 import 'services/native_window_service.dart';
 import 'services/nearsend_message_client.dart';
 import 'services/receive_history_store.dart';
+import 'services/temp_file_cleanup.dart';
 import 'services/windows_clipboard_files.dart';
 
 Future<void> main() async {
@@ -345,6 +346,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final Map<String, TransferHandle> _transferHandles = {};
   final _historyStore = ReceiveHistoryStore();
   final _conversationStore = ConversationStore();
+  TempFileCleanupService? _tempCleanup;
   List<ReceiveHistoryEntry> _receiveHistory = [];
   final Set<String> _clipboardAutoSendFingerprints = {};
   final Set<String> _favoriteDeviceFingerprints = {};
@@ -429,6 +431,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     // announcing, so peers see the right name.
     await _discoveryService.identity.restoreIdentity();
     await _loadConversations();
+
+    // 初始化临时文件清理服务
+    final preferences = await SharedPreferences.getInstance();
+    _tempCleanup = TempFileCleanupService(preferences: preferences);
+    unawaited(_tempCleanup!.performStartupCleanup());
+
     if (!mounted) return;
     if (widget.enableDiscovery) {
       // Android drops inbound multicast unless a MulticastLock is held.
@@ -506,6 +514,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     unawaited(_incomingTransferSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
     unawaited(_discoveryService.dispose());
+    _tempCleanup?.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -1218,7 +1227,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   Future<void> _deleteHistoryEntry(ReceiveHistoryEntry entry) async {
     final result = await _confirmHistoryRemoval(
       title: '删除记录',
-      message: '从接收历史中移除「${entry.fileName}」。',
+      message: '从文件记录中移除「${entry.fileName}」。',
     );
     if (result == null || !mounted) return;
 
@@ -2537,6 +2546,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     overwriteSameNameFiles: _overwriteSameNameFiles,
                     minimizeToTrayEnabled: _minimizeToTrayEnabled,
                     restoringWindowSettings: _restoringSettings,
+                    tempCleanupService: _tempCleanup,
                     onAutoSaveChanged: (value) => setState(() {
                       _autoSaveEnabled = value;
                     }),
@@ -2764,12 +2774,10 @@ class _Sidebar extends StatelessWidget {
             tooltip: '传输',
             onPressed: onTransfers,
           ),
-          const _NavIcon(icon: Icons.devices_rounded, tooltip: '设备'),
-          const _NavIcon(icon: Icons.star_rounded, tooltip: '收藏'),
           _NavIcon(
             icon: Icons.history_rounded,
             active: activeSection == _MainSection.history,
-            tooltip: '接收历史',
+            tooltip: '文件记录',
             onPressed: onHistory,
           ),
           const Spacer(),
@@ -2874,7 +2882,7 @@ class _NavDrawer extends StatelessWidget {
             ),
             _NavDrawerItem(
               icon: Icons.history_rounded,
-              label: '接收历史',
+              label: '文件记录',
               active: activeSection == _MainSection.history,
               onTap: () => _select(context, onHistory),
             ),
@@ -3720,6 +3728,8 @@ class SettingsPage extends StatelessWidget {
     required this.onOverwriteSameNameFilesChanged,
     required this.onMinimizeToTrayChanged,
     required this.onChooseDirectory,
+    this.tempCleanupService,
+    this.onShowTempCleanup,
     this.onMenu,
   });
 
@@ -3732,6 +3742,8 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<bool> onOverwriteSameNameFilesChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final VoidCallback onChooseDirectory;
+  final TempFileCleanupService? tempCleanupService;
+  final VoidCallback? onShowTempCleanup;
   final VoidCallback? onMenu;
 
   @override
@@ -3908,6 +3920,68 @@ class SettingsPage extends StatelessWidget {
                   value: overwriteSameNameFiles,
                   onChanged: onOverwriteSameNameFilesChanged,
                 ),
+                const SizedBox(height: 14),
+                if (tempCleanupService != null)
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: _surface,
+                      border: Border.all(color: _line),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: _accentSoft,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Icon(
+                                  Icons.cleaning_services_rounded,
+                                  color: _accent,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '临时文件清理',
+                                      style: TextStyle(
+                                        color: _text,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '清理接收文件产生的临时数据',
+                                      style: TextStyle(
+                                        color: _muted,
+                                        fontSize: 13,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          _TempFileCleanupWidget(
+                            service: tempCleanupService!,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 // Tray/minimize is a desktop-only feature.
                 if (Platform.isWindows) ...[
                   const SizedBox(height: 14),
@@ -3998,6 +4072,469 @@ class _SettingsSwitchCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TempFileCleanupWidget extends StatefulWidget {
+  const _TempFileCleanupWidget({
+    required this.service,
+  });
+
+  final TempFileCleanupService service;
+
+  @override
+  State<_TempFileCleanupWidget> createState() => _TempFileCleanupWidgetState();
+}
+
+class _TempFileCleanupWidgetState extends State<_TempFileCleanupWidget> {
+  TempFileUsage? _usage;
+  bool _isLoading = false;
+  CleanupResult? _lastResult;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUsage();
+  }
+
+  Future<void> _loadUsage() async {
+    setState(() {
+      _isLoading = true;
+    });
+    final usage = await widget.service.getTempFileUsage();
+    if (mounted) {
+      setState(() {
+        _usage = usage;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _performCleanup() async {
+    setState(() {
+      _isLoading = true;
+    });
+    final result = await widget.service.performCleanup();
+    if (mounted) {
+      setState(() {
+        _lastResult = result;
+        _isLoading = false;
+      });
+    }
+    // 在 setState 之后再加载使用情况
+    if (mounted) {
+      await _loadUsage();
+    }
+  }
+
+  Future<void> _performFullCleanup() async {
+    setState(() {
+      _isLoading = true;
+    });
+    final result = await widget.service.performFullCleanup();
+    if (mounted) {
+      setState(() {
+        _lastResult = result;
+        _isLoading = false;
+      });
+    }
+    if (mounted) {
+      await _loadUsage();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading && _usage == null) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    final hasFiles = _usage != null && _usage!.totalFiles > 0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 文件统计
+        if (_usage != null) ...[
+          Row(
+            children: [
+              Expanded(
+                child: _StatItem(
+                  label: '临时文件',
+                  value: '${_usage!.totalFiles} 个',
+                ),
+              ),
+              Expanded(
+                child: _StatItem(
+                  label: '占用空间',
+                  value: formatBytes(_usage!.totalBytes),
+                ),
+              ),
+              if (_usage!.oldFiles > 0)
+                Expanded(
+                  child: _StatItem(
+                    label: '可清理',
+                    value: '${_usage!.oldFiles} 个',
+                    valueColor: const Color(0xFFCB9A4B),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+        ],
+        // 设置选项
+        _CleanupOptionRow(
+          label: '自动清理',
+          description: '定期清理过期临时文件',
+          value: widget.service.autoCleanupEnabled,
+          onChanged: (value) async {
+            await widget.service.setAutoCleanupEnabled(value);
+            setState(() {});
+          },
+        ),
+        const SizedBox(height: 10),
+        _CleanupOptionRow(
+          label: '启动时清理',
+          description: '应用启动时自动清理',
+          value: widget.service.cleanupOnStartup,
+          onChanged: (value) async {
+            await widget.service.setCleanupOnStartup(value);
+            setState(() {});
+          },
+        ),
+        const SizedBox(height: 10),
+        _CleanupDaysRow(
+          days: widget.service.cleanupOlderThanDays,
+          onChanged: (days) async {
+            await widget.service.setCleanupOlderThanDays(days);
+            setState(() {});
+          },
+        ),
+        const SizedBox(height: 14),
+        // 清理按钮
+        Row(
+          children: [
+            Expanded(
+              child: ShadButton(
+                onPressed: hasFiles && !_isLoading ? _performCleanup : null,
+                width: double.infinity,
+                height: 38,
+                backgroundColor: hasFiles ? _accent : null,
+                foregroundColor: hasFiles ? Colors.white : _muted,
+                hoverBackgroundColor: _accentSoft,
+                child: Text(_isLoading ? '清理中...' : '清理过期文件'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ShadButton.ghost(
+                onPressed: hasFiles && !_isLoading ? _performFullCleanup : null,
+                width: double.infinity,
+                height: 38,
+                foregroundColor: _muted,
+                hoverBackgroundColor: _accentSoft,
+                child: const Text('全部清理'),
+              ),
+            ),
+          ],
+        ),
+        // 清理结果
+        if (_lastResult != null) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _lastResult!.success
+                  ? const Color(0xFFECFDF5)
+                  : const Color(0xFFFEE2E2),
+              border: Border.all(
+                color: _lastResult!.success
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFEF4444),
+                width: 0.5,
+              ),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _lastResult!.success
+                      ? Icons.check_circle_rounded
+                      : Icons.error_rounded,
+                  size: 18,
+                  color: _lastResult!.success
+                      ? const Color(0xFF10B981)
+                      : const Color(0xFFEF4444),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _lastResult!.success
+                        ? '已清理 ${_lastResult!.filesCleaned} 个文件，释放 ${formatBytes(_lastResult!.bytesFreed)}'
+                        : '清理失败：${_lastResult!.error ?? "未知错误"}',
+                    style: TextStyle(
+                      color: _lastResult!.success
+                          ? const Color(0xFF065F46)
+                          : const Color(0xFF991B1B),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _StatItem extends StatelessWidget {
+  const _StatItem({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: _muted,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor ?? _text,
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CleanupOptionRow extends StatefulWidget {
+  const _CleanupOptionRow({
+    required this.label,
+    required this.description,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String description;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  State<_CleanupOptionRow> createState() => _CleanupOptionRowState();
+}
+
+class _CleanupOptionRowState extends State<_CleanupOptionRow> {
+  late bool _value;
+
+  @override
+  void initState() {
+    super.initState();
+    _value = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(_CleanupOptionRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _value = widget.value;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.label,
+                style: TextStyle(
+                  color: _text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                widget.description,
+                style: TextStyle(
+                  color: _muted,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        ShadSwitch(
+          value: _value,
+          checkedTrackColor: _accent,
+          onChanged: (value) {
+            setState(() {
+              _value = value;
+            });
+            widget.onChanged(value);
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _CleanupDaysRow extends StatefulWidget {
+  const _CleanupDaysRow({
+    required this.days,
+    required this.onChanged,
+  });
+
+  final int days;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_CleanupDaysRow> createState() => _CleanupDaysRowState();
+}
+
+class _CleanupDaysRowState extends State<_CleanupDaysRow> {
+  late int _days;
+
+  @override
+  void initState() {
+    super.initState();
+    _days = widget.days;
+  }
+
+  @override
+  void didUpdateWidget(_CleanupDaysRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.days != widget.days) {
+      _days = widget.days;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '清理超过',
+                style: TextStyle(
+                  color: _text,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '自动清理保留天数',
+                style: TextStyle(
+                  color: _muted,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Container(
+          height: 32,
+          decoration: BoxDecoration(
+            color: _panel,
+            border: Border.all(color: _line),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: _days > 1
+                    ? () {
+                        setState(() {
+                          _days--;
+                        });
+                        widget.onChanged(_days);
+                      }
+                    : null,
+                icon: Icon(
+                  Icons.remove_rounded,
+                  size: 18,
+                  color: _days > 1 ? _muted : _line,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+              Container(
+                width: 40,
+                alignment: Alignment.center,
+                child: Text(
+                  '$_days',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: _days < 365
+                    ? () {
+                        setState(() {
+                          _days++;
+                        });
+                        widget.onChanged(_days);
+                      }
+                    : null,
+                icon: Icon(
+                  Icons.add_rounded,
+                  size: 18,
+                  color: _days < 365 ? _muted : _line,
+                ),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          '天',
+          style: TextStyle(
+            color: _muted,
+            fontSize: 14,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -4338,7 +4875,7 @@ class HistoryPage extends StatelessWidget {
                   const SizedBox(width: 8),
                 ],
                 Text(
-                  '接收历史',
+                  '文件记录',
                   style: TextStyle(
                     color: _text,
                     fontSize: 20,

@@ -13,7 +13,7 @@ class LocalSendIdentity {
     this.deviceType = 'desktop',
   }) : fingerprint = 'nearsend-${DateTime.now().millisecondsSinceEpoch}';
 
-  static const defaultPort = 53400;
+  static const defaultPort = 53317;
   static const protocolVersion = '2.1';
   static const _fingerprintPreferenceKey = 'device_fingerprint';
   static const _aliasPreferenceKey = 'device_alias';
