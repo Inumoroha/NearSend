@@ -244,8 +244,15 @@ class LocalSendDiscoveryServer {
       path: file.path,
       name: name,
       size: bytes.length,
-      type: NearSendPayloadTypeX.fromFileName(name),
+      type: _payloadTypeFromJson(json['type'], name),
     );
+  }
+
+  NearSendPayloadType _payloadTypeFromJson(Object? value, String fileName) {
+    if (value is String && value.toLowerCase() == 'image') {
+      return NearSendPayloadType.image;
+    }
+    return NearSendPayloadTypeX.fromFileName(fileName);
   }
 
   String _stringField(

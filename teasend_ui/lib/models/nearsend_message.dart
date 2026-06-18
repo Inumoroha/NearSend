@@ -59,7 +59,9 @@ extension NearSendPayloadTypeX on NearSendPayloadType {
       '.png' ||
       '.gif' ||
       '.webp' ||
-      '.bmp' => NearSendPayloadType.image,
+      '.bmp' ||
+      '.heic' ||
+      '.heif' => NearSendPayloadType.image,
       _ => NearSendPayloadType.file,
     };
   }

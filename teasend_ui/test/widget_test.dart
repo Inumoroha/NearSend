@@ -489,7 +489,7 @@ void main() {
     expect(find.text('产品设计'), findsNothing);
 
     final switches = find.byType(ShadSwitch);
-    expect(switches, findsNWidgets(3));
+    expect(switches, findsNWidgets(4));
 
     var autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
     expect(autoSaveSwitch.value, isFalse);
@@ -499,6 +499,83 @@ void main() {
 
     autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
     expect(autoSaveSwitch.value, isTrue);
+  });
+
+  testWidgets('settings page exposes image copy button toggle', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byIcon(Icons.settings_rounded).first);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('图片复制按钮'), findsOneWidget);
+    final switches = find.byType(ShadSwitch);
+    expect(switches, findsNWidgets(4));
+    expect(tester.widget<ShadSwitch>(switches.first).value, isTrue);
+  });
+
+  testWidgets('mobile settings page shows image copy button toggle', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ShadApp.custom(
+        theme: ShadThemeData(brightness: Brightness.light),
+        appBuilder: (context) {
+          return MaterialApp(
+            home: Material(
+              child: SettingsPage(
+                autoSaveEnabled: false,
+                autoSaveDirectory: 'C:\\Downloads\\NearSend',
+                overwriteSameNameFiles: false,
+                showImageCopyButton: true,
+                minimizeToTrayEnabled: false,
+                restoringWindowSettings: false,
+                onAutoSaveChanged: (_) {},
+                onOverwriteSameNameFilesChanged: (_) {},
+                onShowImageCopyButtonChanged: (_) {},
+                onMinimizeToTrayChanged: (_) {},
+                onChooseDirectory: () {},
+                onMenu: () {},
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('图片复制按钮'), findsOneWidget);
+    expect(find.byType(ShadSwitch), findsWidgets);
+  });
+
+  testWidgets('tablet settings page shows image copy button toggle', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byIcon(Icons.settings_rounded).first);
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('图片复制按钮'), findsOneWidget);
+    expect(find.byType(ShadSwitch), findsNWidgets(4));
   });
 
   testWidgets('theme page switches mode and accent color', (
@@ -666,6 +743,36 @@ void main() {
 
     expect(find.byType(CopyAttachmentButton), findsOneWidget);
     expect(find.byIcon(Icons.copy_rounded), findsOneWidget);
+  });
+
+  testWidgets('image copy button can be hidden', (WidgetTester tester) async {
+    final attachment = MessageAttachment(
+      path: 'C:\\tmp\\photo.png',
+      name: 'photo.png',
+      size: 128,
+      kind: FileKind.image,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Material(
+          child: MessageBubble(
+            message: ChatMessage('', isMe: true, attachment: attachment),
+            selectionMode: false,
+            selected: false,
+            onToggleSelected: () {},
+            onRetrySend: () {},
+            onCancelTransfer: () {},
+            onCopyAttachment: (_) {},
+            onPreviewImage: (_) {},
+            showImageCopyButton: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(CopyAttachmentButton), findsNothing);
+    expect(find.byIcon(Icons.copy_rounded), findsNothing);
   });
 
   testWidgets('image message can open and close preview overlay', (

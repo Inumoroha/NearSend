@@ -95,12 +95,14 @@ class LocalSendFileTransferService {
       final value = entry.value;
       if (value is! Map<String, dynamic>) continue;
       final name = value['fileName']?.toString() ?? entry.key;
-      final size = value['size'] is int ? value['size'] as int : 0;
+      final size = _parseSize(value['size']);
+      final fileType = value['fileType']?.toString();
       final token = _token();
       files[entry.key] = _IncomingFile(
         id: entry.key,
         name: name,
         size: size,
+        fileType: fileType,
         token: token,
       );
       responseFiles[entry.key] = token;
@@ -202,12 +204,13 @@ class LocalSendFileTransferService {
           path: file.path,
           name: incoming.name,
           size: await file.length(),
-          type: NearSendPayloadTypeX.fromFileName(incoming.name),
+          type: _payloadTypeFor(incoming.name, incoming.fileType),
         ),
       ),
     );
 
-    if (session.files.values.every((file) => file.received >= file.size)) {
+    incoming.completed = true;
+    if (session.files.values.every((file) => file.completed)) {
       _sessions.remove(sessionId);
     }
   }
@@ -469,10 +472,28 @@ class LocalSendFileTransferService {
       '.png' => 'image/png',
       '.gif' => 'image/gif',
       '.webp' => 'image/webp',
+      '.bmp' => 'image/bmp',
+      '.heic' => 'image/heic',
+      '.heif' => 'image/heif',
       '.pdf' => 'application/pdf',
       '.txt' || '.md' => 'text/plain',
       _ => 'application/octet-stream',
     };
+  }
+
+  int _parseSize(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  NearSendPayloadType _payloadTypeFor(String fileName, String? fileType) {
+    final normalized = fileType?.trim().toLowerCase();
+    if (normalized != null && normalized.startsWith('image/')) {
+      return NearSendPayloadType.image;
+    }
+    return NearSendPayloadTypeX.fromFileName(fileName);
   }
 
   String _token() {
@@ -539,14 +560,17 @@ class _IncomingFile {
     required this.id,
     required this.name,
     required this.size,
+    required this.fileType,
     required this.token,
   });
 
   final String id;
   final String name;
   final int size;
+  final String? fileType;
   final String token;
   int received = 0;
+  bool completed = false;
 }
 
 class _OutgoingFile {

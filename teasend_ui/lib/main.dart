@@ -56,6 +56,7 @@ const _themeModePreferenceKey = 'theme_mode';
 const _themeColorPreferenceKey = 'theme_color';
 const _clipboardAutoSendPreferenceKey = 'clipboard_auto_send_fingerprints';
 const _favoriteDevicesPreferenceKey = 'favorite_device_fingerprints';
+const _showImageCopyButtonPreferenceKey = 'show_image_copy_button';
 const _deviceOfflineAfter = Duration(seconds: 120);
 const _devicePresenceRefreshInterval = Duration(seconds: 5);
 
@@ -254,6 +255,7 @@ class NearSendApp extends StatelessWidget {
             ring: _accent,
             selection: _accent.withValues(alpha: 0.20),
           ),
+          textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
         ),
         darkTheme: ShadThemeData(
@@ -263,6 +265,7 @@ class NearSendApp extends StatelessWidget {
             ring: _accent,
             selection: _accent.withValues(alpha: 0.28),
           ),
+          textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
         ),
         themeMode: ThemeMode.light,
@@ -275,7 +278,7 @@ class NearSendApp extends StatelessWidget {
                 seedColor: _accent,
                 brightness: Brightness.light,
               ),
-              fontFamily: 'Microsoft YaHei',
+              fontFamily: 'HarmonyOS Sans SC',
               scaffoldBackgroundColor: const Color(0xFFEDE9DE),
               dialogTheme: DialogThemeData(
                 backgroundColor: Colors.transparent,
@@ -362,6 +365,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   bool _autoSaveEnabled = false;
   bool _overwriteSameNameFiles = false;
   bool _minimizeToTrayEnabled = false;
+  bool _showImageCopyButton = true;
   bool _trayReady = false;
   bool _quittingFromTray = false;
   bool _restoringSettings = true;
@@ -567,6 +571,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final favoriteFingerprints =
         preferences.getStringList(_favoriteDevicesPreferenceKey) ??
         const <String>[];
+    final showImageCopyButton =
+        preferences.getBool(_showImageCopyButtonPreferenceKey) ?? true;
     _applyPalette(_buildPalette(themeMode, themeColor));
 
     if (enabled && Platform.isWindows) {
@@ -581,6 +587,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _overwriteSameNameFiles = overwriteSameNameFiles;
       _themeMode = themeMode;
       _themeColor = themeColor;
+      _showImageCopyButton = showImageCopyButton;
       _clipboardAutoSendFingerprints
         ..clear()
         ..addAll(autoSendFingerprints);
@@ -644,6 +651,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (!mounted) return;
     setState(() {
       _overwriteSameNameFiles = enabled;
+    });
+  }
+
+  Future<void> _setShowImageCopyButton(bool enabled) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_showImageCopyButtonPreferenceKey, enabled);
+    if (!mounted) return;
+    setState(() {
+      _showImageCopyButton = enabled;
     });
   }
 
@@ -782,13 +798,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
   void _startPresenceRefreshTimer() {
     _presenceRefreshTimer?.cancel();
-    _presenceRefreshTimer = Timer.periodic(
-      _devicePresenceRefreshInterval,
-      (_) {
-        if (!mounted || _devices.isEmpty) return;
-        setState(() {});
-      },
-    );
+    _presenceRefreshTimer = Timer.periodic(_devicePresenceRefreshInterval, (_) {
+      if (!mounted || _devices.isEmpty) return;
+      setState(() {});
+    });
   }
 
   void _upsertDevice(DiscoveredDevice device) {
@@ -1136,6 +1149,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       '.gif' => 'image/gif',
       '.webp' => 'image/webp',
       '.bmp' => 'image/bmp',
+      '.heic' => 'image/heic',
+      '.heif' => 'image/heif',
       '.pdf' => 'application/pdf',
       '.txt' || '.md' => 'text/plain',
       _ => 'application/octet-stream',
@@ -1405,16 +1420,57 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       acceptedTypeGroups: const [
         XTypeGroup(
           label: 'Images',
-          extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
+          extensions: [
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'webp',
+            'bmp',
+            'heic',
+            'heif',
+          ],
         ),
       ],
     );
-    _addPendingAttachments(files.map((file) => file.path));
+    _addPendingAttachments(await _cachePickedFilesForSending(files));
   }
 
   Future<void> _sendFile() async {
     final files = await openFiles();
-    _addPendingAttachments(files.map((file) => file.path));
+    _addPendingAttachments(await _cachePickedFilesForSending(files));
+  }
+
+  Future<List<String>> _cachePickedFilesForSending(List<XFile> files) async {
+    if (!Platform.isAndroid) {
+      return files.map((file) => file.path).toList(growable: false);
+    }
+
+    final directory = await Directory.systemTemp.createTemp(
+      'nearsend_android_send_',
+    );
+    final paths = <String>[];
+    for (final file in files) {
+      final safeName = _safeFileName(
+        file.name.trim().isEmpty ? p.basename(file.path) : file.name,
+      );
+      final destination = await _availableDestination(directory, safeName);
+      final sink = destination.openWrite();
+      try {
+        await sink.addStream(file.openRead());
+      } finally {
+        await sink.close();
+      }
+      paths.add(destination.path);
+    }
+    return paths;
+  }
+
+  String _safeFileName(String fileName) {
+    final sanitized = fileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    return sanitized.trim().isEmpty
+        ? 'attachment-${DateTime.now().millisecondsSinceEpoch}'
+        : sanitized;
   }
 
   void _addPendingAttachments(Iterable<String> paths) {
@@ -1679,7 +1735,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         _updateMessageStatus(message.id, MessageSendStatus.sent);
       } catch (e) {
         _updateMessageStatus(message.id, MessageSendStatus.failed);
-        _appendSystemMessage('文字发送失败：对方需要支持 NearSend 消息接口，或网络不可达。\n设备地址：${target.endpoint}');
+        _appendSystemMessage(
+          '文字发送失败：对方需要支持 NearSend 消息接口，或网络不可达。\n设备地址：${target.endpoint}',
+        );
       }
       return;
     }
@@ -1976,13 +2034,20 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         ? _networkConversationKeys[index]
         : null;
     final isFavorite =
-        fingerprint != null && _favoriteDeviceFingerprints.contains(fingerprint);
+        fingerprint != null &&
+        _favoriteDeviceFingerprints.contains(fingerprint);
 
     // Build the menu items with current theme
     final isDark = _themeMode == AppThemeMode.dark;
-    final menuColor = isDark ? const Color(0xFF1F2937) : const Color(0xFFFFFFFF);
-    final lineColor = isDark ? const Color(0xFF374151) : const Color(0xFFE2E8F0);
-    final textColor = isDark ? const Color(0xFFF9FAFB) : const Color(0xFF1F2937);
+    final menuColor = isDark
+        ? const Color(0xFF1F2937)
+        : const Color(0xFFFFFFFF);
+    final lineColor = isDark
+        ? const Color(0xFF374151)
+        : const Color(0xFFE2E8F0);
+    final textColor = isDark
+        ? const Color(0xFFF9FAFB)
+        : const Color(0xFF1F2937);
 
     final action = await showMenu<_ConversationMenuAction>(
       context: context,
@@ -2544,6 +2609,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     autoSaveEnabled: _autoSaveEnabled,
                     autoSaveDirectory: _autoSaveDirectory,
                     overwriteSameNameFiles: _overwriteSameNameFiles,
+                    showImageCopyButton: _showImageCopyButton,
                     minimizeToTrayEnabled: _minimizeToTrayEnabled,
                     restoringWindowSettings: _restoringSettings,
                     tempCleanupService: _tempCleanup,
@@ -2551,6 +2617,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                       _autoSaveEnabled = value;
                     }),
                     onOverwriteSameNameFilesChanged: _setOverwriteSameNameFiles,
+                    onShowImageCopyButtonChanged: _setShowImageCopyButton,
                     onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
                     onChooseDirectory: _chooseAutoSaveDirectory,
                     onMenu: showDrawer ? _openNavDrawer : null,
@@ -2655,6 +2722,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                               onRetrySendAttachment: _retrySendAttachment,
                               onCancelTransfer: _cancelTransfer,
                               onCopyAttachment: _copyAttachmentPath,
+                              showImageCopyButton: _showImageCopyButton,
                               previewImage: _previewImage,
                               onPreviewImage: _openImagePreview,
                               onClosePreview: _closeImagePreview,
@@ -3136,7 +3204,9 @@ class _PopupMenuActionLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF0F172A);
+    final textColor = isDark
+        ? const Color(0xFFF8FAFC)
+        : const Color(0xFF0F172A);
     final color = danger ? const Color(0xFFC85D4D) : textColor;
     return Row(
       children: [
@@ -3722,10 +3792,12 @@ class SettingsPage extends StatelessWidget {
     required this.autoSaveEnabled,
     required this.autoSaveDirectory,
     required this.overwriteSameNameFiles,
+    required this.showImageCopyButton,
     required this.minimizeToTrayEnabled,
     required this.restoringWindowSettings,
     required this.onAutoSaveChanged,
     required this.onOverwriteSameNameFilesChanged,
+    required this.onShowImageCopyButtonChanged,
     required this.onMinimizeToTrayChanged,
     required this.onChooseDirectory,
     this.tempCleanupService,
@@ -3736,10 +3808,12 @@ class SettingsPage extends StatelessWidget {
   final bool autoSaveEnabled;
   final String autoSaveDirectory;
   final bool overwriteSameNameFiles;
+  final bool showImageCopyButton;
   final bool minimizeToTrayEnabled;
   final bool restoringWindowSettings;
   final ValueChanged<bool> onAutoSaveChanged;
   final ValueChanged<bool> onOverwriteSameNameFilesChanged;
+  final ValueChanged<bool> onShowImageCopyButtonChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final VoidCallback onChooseDirectory;
   final TempFileCleanupService? tempCleanupService;
@@ -3748,6 +3822,14 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final imageCopyButtonSetting = _SettingsSwitchCard(
+      icon: Icons.image_rounded,
+      title: '图片复制按钮',
+      description: '控制发送和接收的图片消息是否显示复制按钮',
+      value: showImageCopyButton,
+      onChanged: onShowImageCopyButtonChanged,
+    );
+
     return Container(
       color: _chatBg,
       child: Column(
@@ -3782,6 +3864,8 @@ class SettingsPage extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
               children: [
+                imageCopyButtonSetting,
+                const SizedBox(height: 14),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: _surface,
@@ -3975,9 +4059,7 @@ class SettingsPage extends StatelessWidget {
                             ],
                           ),
                           const SizedBox(height: 14),
-                          _TempFileCleanupWidget(
-                            service: tempCleanupService!,
-                          ),
+                          _TempFileCleanupWidget(service: tempCleanupService!),
                         ],
                       ),
                     ),
@@ -4077,9 +4159,7 @@ class _SettingsSwitchCard extends StatelessWidget {
 }
 
 class _TempFileCleanupWidget extends StatefulWidget {
-  const _TempFileCleanupWidget({
-    required this.service,
-  });
+  const _TempFileCleanupWidget({required this.service});
 
   final TempFileCleanupService service;
 
@@ -4221,23 +4301,33 @@ class _TempFileCleanupWidgetState extends State<_TempFileCleanupWidget> {
         Row(
           children: [
             Expanded(
-              child: ShadButton(
-                onPressed: hasFiles && !_isLoading ? _performCleanup : null,
-                width: double.infinity,
-                height: 38,
-                backgroundColor: hasFiles ? _accent : null,
-                foregroundColor: hasFiles ? Colors.white : _muted,
-                hoverBackgroundColor: _accentSoft,
-                child: Text(_isLoading ? '清理中...' : '清理过期文件'),
-              ),
+              child: hasFiles
+                  ? ShadButton(
+                      onPressed: !_isLoading ? _performCleanup : null,
+                      width: double.infinity,
+                      height: 38,
+                      backgroundColor: _accent,
+                      foregroundColor: Colors.white,
+                      hoverForegroundColor: Colors.white,
+                      hoverBackgroundColor: _accent.withValues(alpha: 0.9),
+                      child: Text(_isLoading ? '清理中...' : '清理过期文件'),
+                    )
+                  : ShadButton.outline(
+                      onPressed: null,
+                      width: double.infinity,
+                      height: 38,
+                      backgroundColor: _surface,
+                      foregroundColor: _muted,
+                      child: const Text('清理过期文件'),
+                    ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: ShadButton.ghost(
+              child: ShadButton.outline(
                 onPressed: hasFiles && !_isLoading ? _performFullCleanup : null,
                 width: double.infinity,
                 height: 38,
-                foregroundColor: _muted,
+                foregroundColor: hasFiles ? _text : _muted,
                 hoverBackgroundColor: _accentSoft,
                 child: const Text('全部清理'),
               ),
@@ -4297,11 +4387,7 @@ class _TempFileCleanupWidgetState extends State<_TempFileCleanupWidget> {
 }
 
 class _StatItem extends StatelessWidget {
-  const _StatItem({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
+  const _StatItem({required this.label, required this.value, this.valueColor});
 
   final String label;
   final String value;
@@ -4312,13 +4398,7 @@ class _StatItem extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            color: _muted,
-            fontSize: 12,
-          ),
-        ),
+        Text(label, style: TextStyle(color: _muted, fontSize: 12)),
         const SizedBox(height: 4),
         Text(
           value,
@@ -4386,10 +4466,7 @@ class _CleanupOptionRowState extends State<_CleanupOptionRow> {
               const SizedBox(height: 2),
               Text(
                 widget.description,
-                style: TextStyle(
-                  color: _muted,
-                  fontSize: 12,
-                ),
+                style: TextStyle(color: _muted, fontSize: 12),
               ),
             ],
           ),
@@ -4411,10 +4488,7 @@ class _CleanupOptionRowState extends State<_CleanupOptionRow> {
 }
 
 class _CleanupDaysRow extends StatefulWidget {
-  const _CleanupDaysRow({
-    required this.days,
-    required this.onChanged,
-  });
+  const _CleanupDaysRow({required this.days, required this.onChanged});
 
   final int days;
   final ValueChanged<int> onChanged;
@@ -4457,13 +4531,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                '自动清理保留天数',
-                style: TextStyle(
-                  color: _muted,
-                  fontSize: 12,
-                ),
-              ),
+              Text('自动清理保留天数', style: TextStyle(color: _muted, fontSize: 12)),
             ],
           ),
         ),
@@ -4527,13 +4595,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
           ),
         ),
         const SizedBox(width: 10),
-        Text(
-          '天',
-          style: TextStyle(
-            color: _muted,
-            fontSize: 14,
-          ),
-        ),
+        Text('天', style: TextStyle(color: _muted, fontSize: 14)),
       ],
     );
   }
@@ -5539,21 +5601,16 @@ class ConversationTile extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           if (favorite) ...[
-                            Icon(
-                              Icons.star_rounded,
-                              color: _warning,
-                              size: 16,
-                            ),
+                            Icon(Icons.star_rounded, color: _warning, size: 16),
                             const SizedBox(width: 5),
                           ],
                           if (conversation.device != null)
                             Icon(
                               online
                                   ? Icons.wifi_rounded
-                                  : Icons.signal_wifi_connected_no_internet_4_rounded,
-                              color: online
-                                  ? const Color(0xFF27A95D)
-                                  : _muted,
+                                  : Icons
+                                        .signal_wifi_connected_no_internet_4_rounded,
+                              color: online ? const Color(0xFF27A95D) : _muted,
                               size: 16,
                             )
                           else
@@ -5874,6 +5931,7 @@ class ChatPanel extends StatelessWidget {
     required this.onFavoriteDeviceChanged,
     required this.clipboardAutoSendEnabled,
     required this.onClipboardAutoSendChanged,
+    required this.showImageCopyButton,
     this.onMobileBack,
   });
 
@@ -5907,6 +5965,7 @@ class ChatPanel extends StatelessWidget {
   final ValueChanged<bool> onFavoriteDeviceChanged;
   final bool clipboardAutoSendEnabled;
   final ValueChanged<bool> onClipboardAutoSendChanged;
+  final bool showImageCopyButton;
 
   @override
   Widget build(BuildContext context) {
@@ -5989,6 +6048,7 @@ class ChatPanel extends StatelessWidget {
                             onCancelTransfer: () =>
                                 onCancelTransfer(message.id),
                             onCopyAttachment: onCopyAttachment,
+                            showImageCopyButton: showImageCopyButton,
                             onPreviewImage: onPreviewImage,
                           ),
                         ),
@@ -6656,6 +6716,7 @@ class MessageBubble extends StatelessWidget {
     required this.onCancelTransfer,
     required this.onCopyAttachment,
     required this.onPreviewImage,
+    this.showImageCopyButton = true,
   });
 
   final ChatMessage message;
@@ -6666,6 +6727,7 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
   final ValueChanged<MessageAttachment> onPreviewImage;
+  final bool showImageCopyButton;
 
   @override
   Widget build(BuildContext context) {
@@ -6741,6 +6803,7 @@ class MessageBubble extends StatelessWidget {
         onRetrySend: onRetrySend,
         onCancelTransfer: onCancelTransfer,
         onCopyAttachment: onCopyAttachment,
+        showImageCopyButton: showImageCopyButton,
         onPreviewImage: onPreviewImage,
       ),
     ];
@@ -6758,6 +6821,7 @@ class MessageBubble extends StatelessWidget {
         onRetrySend: onRetrySend,
         onCancelTransfer: onCancelTransfer,
         onCopyAttachment: onCopyAttachment,
+        showImageCopyButton: showImageCopyButton,
         onPreviewImage: onPreviewImage,
       ),
     ];
@@ -6879,6 +6943,7 @@ class _BubbleSurface extends StatelessWidget {
     required this.onRetrySend,
     required this.onCancelTransfer,
     required this.onCopyAttachment,
+    required this.showImageCopyButton,
     required this.onPreviewImage,
   });
 
@@ -6886,6 +6951,7 @@ class _BubbleSurface extends StatelessWidget {
   final VoidCallback onRetrySend;
   final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
+  final bool showImageCopyButton;
   final ValueChanged<MessageAttachment> onPreviewImage;
 
   @override
@@ -6902,6 +6968,7 @@ class _BubbleSurface extends StatelessWidget {
             onRetrySend: onRetrySend,
             onCancelTransfer: onCancelTransfer,
             onCopyAttachment: onCopyAttachment,
+            showImageCopyButton: showImageCopyButton,
             onPreviewImage: onPreviewImage,
           ),
         ),
@@ -6930,6 +6997,7 @@ class _BubbleSurface extends StatelessWidget {
           onRetrySend: onRetrySend,
           onCancelTransfer: onCancelTransfer,
           onCopyAttachment: onCopyAttachment,
+          showImageCopyButton: showImageCopyButton,
           onPreviewImage: onPreviewImage,
         ),
       ),
@@ -7031,6 +7099,7 @@ class MessageContent extends StatelessWidget {
     required this.onRetrySend,
     required this.onCancelTransfer,
     required this.onCopyAttachment,
+    required this.showImageCopyButton,
     required this.onPreviewImage,
   });
 
@@ -7038,6 +7107,7 @@ class MessageContent extends StatelessWidget {
   final VoidCallback onRetrySend;
   final VoidCallback onCancelTransfer;
   final ValueChanged<MessageAttachment> onCopyAttachment;
+  final bool showImageCopyButton;
   final ValueChanged<MessageAttachment> onPreviewImage;
 
   @override
@@ -7090,6 +7160,7 @@ class MessageContent extends StatelessWidget {
           onRetrySend: onRetrySend,
           onCancelTransfer: onCancelTransfer,
           onCopyAttachment: () => onCopyAttachment(attachment),
+          showCopyButton: !attachment.isImage || showImageCopyButton,
           child: content,
         ),
       ],
@@ -7105,6 +7176,7 @@ class AttachmentMessageFrame extends StatelessWidget {
     required this.onRetrySend,
     required this.onCancelTransfer,
     required this.onCopyAttachment,
+    required this.showCopyButton,
     required this.child,
   });
 
@@ -7113,11 +7185,14 @@ class AttachmentMessageFrame extends StatelessWidget {
   final VoidCallback onRetrySend;
   final VoidCallback onCancelTransfer;
   final VoidCallback onCopyAttachment;
+  final bool showCopyButton;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final copyButton = CopyAttachmentButton(onPressed: onCopyAttachment);
+    final copyButton = showCopyButton
+        ? CopyAttachmentButton(onPressed: onCopyAttachment)
+        : null;
     final isSending = message.status == MessageSendStatus.sending;
     final statusButton = switch (message.status) {
       MessageSendStatus.failed => RetrySendButton(onPressed: onRetrySend),
@@ -7163,8 +7238,10 @@ class AttachmentMessageFrame extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         child,
-        const SizedBox(width: 6),
-        Padding(padding: const EdgeInsets.only(bottom: 3), child: copyButton),
+        if (copyButton != null) ...[
+          const SizedBox(width: 6),
+          Padding(padding: const EdgeInsets.only(bottom: 3), child: copyButton),
+        ],
       ],
     );
   }
@@ -7173,12 +7250,12 @@ class AttachmentMessageFrame extends StatelessWidget {
 class _AttachmentActionRail extends StatelessWidget {
   const _AttachmentActionRail({
     required this.top,
-    required this.bottom,
     required this.attachment,
+    this.bottom,
   });
 
   final Widget top;
-  final Widget bottom;
+  final Widget? bottom;
   final MessageAttachment attachment;
 
   @override
@@ -7188,7 +7265,7 @@ class _AttachmentActionRail extends StatelessWidget {
       height: attachment.isImage ? 180 : 66,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [top, bottom],
+        children: [top, ?bottom],
       ),
     );
   }
@@ -8165,7 +8242,9 @@ enum FileKind {
       '.png' ||
       '.gif' ||
       '.webp' ||
-      '.bmp' => FileKind.image,
+      '.bmp' ||
+      '.heic' ||
+      '.heif' => FileKind.image,
       '.pdf' => FileKind.pdf,
       '.zip' || '.rar' || '.7z' || '.tar' || '.gz' => FileKind.archive,
       '.doc' ||
