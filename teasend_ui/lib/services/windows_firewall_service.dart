@@ -32,6 +32,8 @@ class WindowsFirewallService {
   static const tcpRuleName = 'NearSend Inbound TCP 53317-57322';
   static const udpRuleName = 'NearSend Discovery UDP 53317-53322';
   static const programRuleName = 'NearSend App Inbound';
+  static const debugProgramRuleName = 'NearSend App Inbound Debug';
+  static const releaseProgramRuleName = 'NearSend App Inbound Release';
   static const oldTcpRuleName = 'NearSend Inbound TCP 53317-53322';
   static const ports = '53317-53322,54317-54322,55317-55322,57317-57322';
   static const _powerShellTcpPorts =
@@ -101,20 +103,45 @@ function Test-NearSendRule($name, $protocol) {
   }
   return $true
 }
-function Test-NearSendProgramRule() {
+function Normalize-ProgramPath($path) {
+  if ([string]::IsNullOrWhiteSpace($path) -or $path -eq 'Any') {
+    return $path
+  }
   try {
-    $rules = Get-NetFirewallRule -DisplayName '__PROGRAM_RULE__' -ErrorAction SilentlyContinue |
+    return [System.IO.Path]::GetFullPath($path).TrimEnd('\').ToLowerInvariant()
+  } catch {
+    return ([string]$path).TrimEnd('\').ToLowerInvariant()
+  }
+}
+function Test-NearSendProgramRule($names, $expectedProgram) {
+  $expectedProgramPath = Normalize-ProgramPath $expectedProgram
+  try {
+    $rules = Get-NetFirewallRule -DisplayName $names -ErrorAction SilentlyContinue |
       Where-Object { $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow' }
-    if ([bool]$rules) { return $true }
+    foreach ($rule in $rules) {
+      $appFilter = $rule | Get-NetFirewallApplicationFilter
+      $ruleProgram = [string]$appFilter.Program
+      if ($ruleProgram -eq 'Any' -or (Normalize-ProgramPath $ruleProgram) -eq $expectedProgramPath) {
+        return $true
+      }
+    }
   } catch {
   }
-  $netsh = netsh advfirewall firewall show rule name="__PROGRAM_RULE__" verbose
-  $text = [string]::Join("`n", $netsh)
-  return ($text -match [regex]::Escape('__PROGRAM_RULE__')) -and
-    ($text -match 'Enabled:\s+Yes') -and
-    ($text -match 'Direction:\s+In') -and
-    ($text -match 'Action:\s+Allow')
+  foreach ($name in $names) {
+    $netsh = netsh advfirewall firewall show rule name="$name" verbose
+    $text = [string]::Join("`n", $netsh)
+    if (($text -match [regex]::Escape($name)) -and
+        ($text -match 'Enabled:\s+Yes') -and
+        ($text -match 'Direction:\s+In') -and
+        ($text -match 'Action:\s+Allow') -and
+        ($text -match [regex]::Escape($expectedProgram))) {
+      return $true
+    }
+  }
+  return $false
 }
+$program = '__PROGRAM__'
+$programRuleNames = @('__PROGRAM_RULE__','__DEBUG_PROGRAM_RULE__','__RELEASE_PROGRAM_RULE__')
 $details = [pscustomobject]@{
   allProfiles = [string]::Join("`n", (netsh advfirewall show allprofiles))
   tcpRules = @(Get-NetFirewallRule -DisplayName @('__TCP_RULE__','__OLD_TCP_RULE__') -ErrorAction SilentlyContinue | ForEach-Object {
@@ -139,7 +166,7 @@ $details = [pscustomobject]@{
       profile = $_.Profile.ToString()
     }
   })
-  programRules = @(Get-NetFirewallRule -DisplayName '__PROGRAM_RULE__' -ErrorAction SilentlyContinue | ForEach-Object {
+  programRules = @(Get-NetFirewallRule -DisplayName $programRuleNames -ErrorAction SilentlyContinue | ForEach-Object {
     $appFilter = $_ | Get-NetFirewallApplicationFilter
     [pscustomobject]@{
       enabled = $_.Enabled.ToString()
@@ -155,7 +182,7 @@ $details = [pscustomobject]@{
   localRulesAllowed = Test-LocalRulesAllowed
   tcpAllowed = Test-NearSendRule '__TCP_RULE__' 'TCP'
   udpAllowed = Test-NearSendRule '__UDP_RULE__' 'UDP'
-  programAllowed = Test-NearSendProgramRule
+  programAllowed = Test-NearSendProgramRule $programRuleNames $program
   details = ($details | ConvertTo-Json -Compress -Depth 5)
 } | ConvertTo-Json -Compress'''
             .replaceAll('__TCP_PORTS__', ports)
@@ -164,6 +191,8 @@ $details = [pscustomobject]@{
             .replaceAll('__OLD_TCP_RULE__', oldTcpRuleName)
             .replaceAll('__UDP_RULE__', udpRuleName)
             .replaceAll('__PROGRAM_RULE__', programRuleName)
+            .replaceAll('__DEBUG_PROGRAM_RULE__', debugProgramRuleName)
+            .replaceAll('__RELEASE_PROGRAM_RULE__', releaseProgramRuleName)
             .replaceAll(
               '__PROGRAM__',
               _escapePowerShellPath(Platform.resolvedExecutable),
@@ -236,7 +265,11 @@ $tcpRule = '__TCP_RULE__'
 $oldTcpRule = '__OLD_TCP_RULE__'
 $udpRule = '__UDP_RULE__'
 $programRule = '__PROGRAM_RULE__'
+$debugProgramRule = '__DEBUG_PROGRAM_RULE__'
+$releaseProgramRule = '__RELEASE_PROGRAM_RULE__'
 $program = '__PROGRAM__'
+$debugProgram = '__DEBUG_PROGRAM__'
+$releaseProgram = '__RELEASE_PROGRAM__'
 $log = Join-Path $env:TEMP 'nearsend_firewall_repair.log'
 function Write-RepairLog($message) {
   Add-Content -Path $log -Value ("[{0}] {1}" -f (Get-Date -Format s), $message)
@@ -250,9 +283,17 @@ try {
   Get-NetFirewallRule -DisplayName $oldTcpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   Get-NetFirewallRule -DisplayName $udpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   Get-NetFirewallRule -DisplayName $programRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+  Get-NetFirewallRule -DisplayName $debugProgramRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+  Get-NetFirewallRule -DisplayName $releaseProgramRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   New-NetFirewallRule -DisplayName $tcpRule -Direction Inbound -Action Allow -Protocol TCP -LocalPort $tcpPorts -Profile Any -Enabled True -ErrorAction Stop | Out-Null
   New-NetFirewallRule -DisplayName $udpRule -Direction Inbound -Action Allow -Protocol UDP -LocalPort $udpPorts -Profile Any -Enabled True -ErrorAction Stop | Out-Null
   New-NetFirewallRule -DisplayName $programRule -Direction Inbound -Action Allow -Program $program -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+  if (Test-Path $debugProgram) {
+    New-NetFirewallRule -DisplayName $debugProgramRule -Direction Inbound -Action Allow -Program $debugProgram -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+  }
+  if (Test-Path $releaseProgram) {
+    New-NetFirewallRule -DisplayName $releaseProgramRule -Direction Inbound -Action Allow -Program $releaseProgram -Profile Any -Enabled True -ErrorAction Stop | Out-Null
+  }
   Write-RepairLog 'New-NetFirewallRule succeeded'
   exit 0
 } catch {
@@ -264,9 +305,17 @@ try {
   netsh advfirewall firewall delete rule name="$oldTcpRule" | Out-Null
   netsh advfirewall firewall delete rule name="$udpRule" | Out-Null
   netsh advfirewall firewall delete rule name="$programRule" | Out-Null
+  netsh advfirewall firewall delete rule name="$debugProgramRule" | Out-Null
+  netsh advfirewall firewall delete rule name="$releaseProgramRule" | Out-Null
   netsh advfirewall firewall add rule name="$tcpRule" dir=in action=allow protocol=TCP localport=$tcpPortsText profile=any | Out-Null
   netsh advfirewall firewall add rule name="$udpRule" dir=in action=allow protocol=UDP localport=$udpPortsText profile=any | Out-Null
   netsh advfirewall firewall add rule name="$programRule" dir=in action=allow program="$program" profile=any | Out-Null
+  if (Test-Path $debugProgram) {
+    netsh advfirewall firewall add rule name="$debugProgramRule" dir=in action=allow program="$debugProgram" profile=any | Out-Null
+  }
+  if (Test-Path $releaseProgram) {
+    netsh advfirewall firewall add rule name="$releaseProgramRule" dir=in action=allow program="$releaseProgram" profile=any | Out-Null
+  }
   Write-RepairLog 'netsh fallback succeeded'
   exit 0
 } catch {
@@ -282,9 +331,19 @@ try {
             .replaceAll('__OLD_TCP_RULE__', oldTcpRuleName)
             .replaceAll('__UDP_RULE__', udpRuleName)
             .replaceAll('__PROGRAM_RULE__', programRuleName)
+            .replaceAll('__DEBUG_PROGRAM_RULE__', debugProgramRuleName)
+            .replaceAll('__RELEASE_PROGRAM_RULE__', releaseProgramRuleName)
             .replaceAll(
               '__PROGRAM__',
               _escapePowerShellPath(Platform.resolvedExecutable),
+            )
+            .replaceAll(
+              '__DEBUG_PROGRAM__',
+              _escapePowerShellPath(_debugExecutablePath),
+            )
+            .replaceAll(
+              '__RELEASE_PROGRAM__',
+              _escapePowerShellPath(_releaseExecutablePath),
             );
 
     final tempDir = Directory.systemTemp.createTempSync('nearsend_firewall_');
@@ -366,6 +425,20 @@ if ($null -eq $process) {
 
   String _escapePowerShellPath(String path) {
     return path.replaceAll("'", "''");
+  }
+
+  String get _debugExecutablePath {
+    final executable = File(Platform.resolvedExecutable);
+    final runnerDir = executable.parent.parent;
+    return '${runnerDir.path}${Platform.pathSeparator}Debug'
+        '${Platform.pathSeparator}nearsend.exe';
+  }
+
+  String get _releaseExecutablePath {
+    final executable = File(Platform.resolvedExecutable);
+    final runnerDir = executable.parent.parent;
+    return '${runnerDir.path}${Platform.pathSeparator}Release'
+        '${Platform.pathSeparator}nearsend.exe';
   }
 }
 
