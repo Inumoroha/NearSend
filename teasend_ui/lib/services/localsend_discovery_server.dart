@@ -24,15 +24,45 @@ class LocalSendDiscoveryServer {
   late final LocalSendFileTransferService _fileTransfer;
   final _deviceController = StreamController<DiscoveredDevice>.broadcast();
   final _messageController = StreamController<NearSendMessage>.broadcast();
+  final _diagnosticController = StreamController<String>.broadcast();
   StreamSubscription<NearSendMessage>? _fileSubscription;
   HttpServer? _server;
 
+  static const fallbackPorts = [
+    53317,
+    53318,
+    53319,
+    53320,
+    53321,
+    53322,
+    54317,
+    54318,
+    54319,
+    54320,
+    54321,
+    54322,
+    55317,
+    55318,
+    55319,
+    55320,
+    55321,
+    55322,
+    57317,
+    57318,
+    57319,
+    57320,
+    57321,
+    57322,
+  ];
+
   Stream<DiscoveredDevice> get devices => _deviceController.stream;
   Stream<NearSendMessage> get messages => _messageController.stream;
+  Stream<String> get diagnostics => _diagnosticController.stream;
   Stream<IncomingTransferRequest> get incomingRequests =>
       _fileTransfer.incomingRequests;
 
   int get boundPort => _server?.port ?? identity.port;
+  bool get isRunning => _server != null;
 
   bool acceptIncomingTransfer(String sessionId) =>
       _fileTransfer.acceptIncoming(sessionId);
@@ -41,11 +71,7 @@ class LocalSendDiscoveryServer {
 
   Future<void> start() async {
     if (_server != null) return;
-    _server = await HttpServer.bind(
-      InternetAddress.anyIPv4,
-      identity.port,
-      shared: true,
-    );
+    _server = await _bindServer();
     _fileSubscription = _fileTransfer.incomingFiles.listen(
       _messageController.add,
     );
@@ -58,7 +84,33 @@ class LocalSendDiscoveryServer {
     await _fileSubscription?.cancel();
     await _fileTransfer.dispose();
     await _messageController.close();
+    await _diagnosticController.close();
     await _deviceController.close();
+  }
+
+  Future<HttpServer> _bindServer() async {
+    Object? lastError;
+    final candidates = [
+      identity.port,
+      for (final port in fallbackPorts)
+        if (port != identity.port) port,
+    ];
+    for (final port in candidates) {
+      try {
+        return await HttpServer.bind(
+          InternetAddress.anyIPv4,
+          port,
+          shared: true,
+        );
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    Error.throwWithStackTrace(
+      lastError ?? StateError('Unable to bind LocalSend discovery server'),
+      StackTrace.current,
+    );
   }
 
   Future<void> _handleRequest(HttpRequest request) async {
@@ -109,7 +161,11 @@ class LocalSendDiscoveryServer {
   }
 
   Future<void> _handleInfo(HttpRequest request) async {
-    final senderFingerprint = request.uri.queryParameters['fingerprint'];
+    final fingerprint = request.uri.queryParameters['fingerprint'];
+    if (fingerprint != 'nearsend-healthcheck') {
+      _diagnosticController.add(_requestSource(request, 'info'));
+    }
+    final senderFingerprint = fingerprint;
     if (senderFingerprint == identity.fingerprint) {
       await _respondJson(request, HttpStatus.preconditionFailed, {
         'message': 'Self-discovered',
@@ -117,10 +173,11 @@ class LocalSendDiscoveryServer {
       return;
     }
 
-    await _respondJson(request, HttpStatus.ok, identity.infoJson());
+    await _respondJson(request, HttpStatus.ok, _selfInfoJson());
   }
 
   Future<void> _handlePrepareUpload(HttpRequest request) async {
+    _diagnosticController.add(_requestSource(request, 'prepare-upload'));
     try {
       final response = await _fileTransfer.handlePrepareUpload(request);
       await _respondJson(request, HttpStatus.ok, response);
@@ -163,6 +220,7 @@ class LocalSendDiscoveryServer {
   }
 
   Future<void> _handleRegister(HttpRequest request) async {
+    _diagnosticController.add(_requestSource(request, 'register'));
     final body = await utf8.decodeStream(request);
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
@@ -189,7 +247,7 @@ class LocalSendDiscoveryServer {
       _deviceController.add(device);
     }
 
-    await _respondJson(request, HttpStatus.ok, identity.infoJson());
+    await _respondJson(request, HttpStatus.ok, _selfInfoJson());
   }
 
   Future<void> _handleNearSendMessage(HttpRequest request) async {
@@ -221,9 +279,24 @@ class LocalSendDiscoveryServer {
         text: _stringField(decoded, 'text'),
         receivedAt: DateTime.now(),
         attachment: await _attachmentFromJson(decoded),
+        senderDevice: _senderDeviceFromJson(
+          decoded['senderDevice'],
+          request.connectionInfo?.remoteAddress.address ?? '',
+        ),
       ),
     );
+    _diagnosticController.add(_requestSource(request, 'message'));
     await _respondJson(request, HttpStatus.ok, {'ok': true});
+  }
+
+  DiscoveredDevice? _senderDeviceFromJson(Object? value, String remoteIp) {
+    if (value is! Map<String, dynamic> || remoteIp.isEmpty) return null;
+    return DiscoveredDevice.fromLocalSendJson(
+      value,
+      remoteIp,
+      fallbackPort: identity.port,
+      fallbackHttps: identity.https,
+    );
   }
 
   Future<NearSendAttachment?> _attachmentFromJson(
@@ -274,5 +347,18 @@ class LocalSendDiscoveryServer {
       ..headers.contentType = ContentType.json
       ..write(jsonEncode(body));
     await request.response.close();
+  }
+
+  Map<String, Object?> _selfInfoJson() {
+    return {
+      ...identity.infoJson(),
+      'port': boundPort,
+      'protocol': identity.protocol,
+    };
+  }
+
+  String _requestSource(HttpRequest request, String kind) {
+    final remote = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+    return '$kind from $remote ${request.method} ${request.uri.path}';
   }
 }

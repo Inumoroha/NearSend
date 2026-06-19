@@ -28,6 +28,7 @@ import 'services/nearsend_message_client.dart';
 import 'services/receive_history_store.dart';
 import 'services/temp_file_cleanup.dart';
 import 'services/windows_clipboard_files.dart';
+import 'services/windows_firewall_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -324,18 +325,22 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final List<MessageAttachment> _pendingAttachments = [];
   final _clipboardFiles = WindowsClipboardFiles();
+  final _firewallService = const WindowsFirewallService();
   final _nativeWindow = const NativeWindowService();
   late final _discoveryService = LanDiscoveryService(
     shouldConfirmIncoming: _shouldConfirmIncomingTransfer,
   );
   late final _messageClient = NearSendMessageClient(
     identity: _discoveryService.identity,
+    boundPort: () => _discoveryService.boundPort,
   );
   late final _localSendTransfer = LocalSendFileTransferService(
     identity: _discoveryService.identity,
+    boundPort: () => _discoveryService.boundPort,
   );
   late final _manualConnector = ManualDeviceConnector(
     identity: _discoveryService.identity,
+    boundPort: () => _discoveryService.boundPort,
   );
   final Map<String, DiscoveredDevice> _devices = {};
   final Map<String, Conversation> _deviceConversations = {};
@@ -358,6 +363,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   int _lastClipboardSequence = 0;
   StreamSubscription<DiscoveredDevice>? _discoverySubscription;
   StreamSubscription<NearSendMessage>? _messageSubscription;
+  StreamSubscription<String>? _diagnosticSubscription;
   StreamSubscription<IncomingTransferRequest>? _incomingTransferSubscription;
   bool _isScanning = false;
   bool _messageSelectionMode = false;
@@ -369,6 +375,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   bool _trayReady = false;
   bool _quittingFromTray = false;
   bool _restoringSettings = true;
+  bool _checkingFirewall = false;
+  bool _repairingFirewall = false;
+  WindowsFirewallStatus? _firewallStatus;
+  WindowsFirewallRepairResult? _lastFirewallRepair;
+  String? _lastInboundRequest;
+  List<String> _localEndpointLines = const [];
+  String? _localHttpStatus;
   AppThemeMode _themeMode = AppThemeMode.light;
   Color _themeColor = _themeColorOptions.first;
   MessageAttachment? _previewImage;
@@ -420,6 +433,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     _applyPalette(_buildPalette(_themeMode, _themeColor));
     unawaited(_initAndroidFallbackDirectory());
     unawaited(_restoreWindowSettings());
+    unawaited(_refreshFirewallStatus());
     unawaited(_loadReceiveHistory());
     unawaited(_initialize());
   }
@@ -449,10 +463,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _messageSubscription = _discoveryService.messages.listen(
         (message) => unawaited(_handleIncomingMessage(message)),
       );
+      _diagnosticSubscription = _discoveryService.diagnostics.listen(
+        _handleInboundDiagnostic,
+      );
       _incomingTransferSubscription = _discoveryService.incomingRequests.listen(
         _handleIncomingTransferRequest,
       );
       unawaited(_startDiscovery());
+      unawaited(_refreshReceiveDiagnostics());
       _startPresenceRefreshTimer();
     } else {
       setState(() {
@@ -515,6 +533,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     unawaited(AndroidPlatform.releaseMulticastLock());
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
+    unawaited(_diagnosticSubscription?.cancel());
     unawaited(_incomingTransferSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
     unawaited(_discoveryService.dispose());
@@ -663,6 +682,146 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
+  Future<void> _refreshFirewallStatus() async {
+    if (!Platform.isWindows || _checkingFirewall) return;
+    if (mounted) {
+      setState(() {
+        _checkingFirewall = true;
+      });
+    }
+    final status = await _firewallService.checkStatus();
+    if (!mounted) return;
+    setState(() {
+      _firewallStatus = status;
+      _checkingFirewall = false;
+    });
+  }
+
+  Future<void> _refreshReceiveDiagnostics() async {
+    if (!widget.enableDiscovery) return;
+    final running = await _ensureReceiveServiceStarted();
+    if (!running) return;
+    await Future.wait([
+      _refreshLocalEndpoints(),
+      _refreshLocalHttpStatus(),
+      if (Platform.isWindows) _refreshFirewallStatus(),
+    ]);
+  }
+
+  Future<bool> _ensureReceiveServiceStarted() async {
+    if (_discoveryService.isRunning) return true;
+    try {
+      await _discoveryService.start();
+      return _discoveryService.isRunning;
+    } catch (error) {
+      if (!mounted) return false;
+      setState(() {
+        _localHttpStatus = 'server start failed: ${error.runtimeType}';
+      });
+      return false;
+    }
+  }
+
+  Future<void> _refreshLocalEndpoints() async {
+    if (!widget.enableDiscovery) return;
+    try {
+      final endpoints = await _discoveryService.localConnectEndpoints();
+      if (!mounted) return;
+      setState(() {
+        _localEndpointLines = endpoints;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _localEndpointLines = const [];
+      });
+    }
+  }
+
+  Future<void> _refreshLocalHttpStatus() async {
+    if (!widget.enableDiscovery) return;
+    final running = await _ensureReceiveServiceStarted();
+    if (!running) return;
+    final port = _discoveryService.boundPort;
+    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+    try {
+      final request = await client.getUrl(
+        Uri(
+          scheme: 'http',
+          host: '127.0.0.1',
+          port: port,
+          path: '/api/localsend/v2/info',
+          queryParameters: {'fingerprint': 'nearsend-healthcheck'},
+        ),
+      );
+      final response = await request.close().timeout(
+        const Duration(seconds: 2),
+      );
+      await response.drain<void>();
+      if (!mounted) return;
+      setState(() {
+        _localHttpStatus = '127.0.0.1:$port -> HTTP ${response.statusCode}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _localHttpStatus = '127.0.0.1:$port -> ${error.runtimeType}';
+      });
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<void> _repairFirewall() async {
+    if (!Platform.isWindows || _repairingFirewall) return;
+    setState(() {
+      _repairingFirewall = true;
+    });
+    try {
+      final result = await _firewallService.repair();
+      if (mounted) {
+        setState(() {
+          _lastFirewallRepair = result;
+        });
+      }
+      await _refreshFirewallStatus();
+      if (!mounted) return;
+      final status = _firewallStatus;
+      _showToast(
+        result.success || (status != null && !status.needsRepair)
+            ? '防火墙规则已修复'
+            : result.started
+            ? '修复未生效：${_firewallRepairSummary(result)}'
+            : '未启动修复：请在 UAC 弹窗中允许管理员权限',
+      );
+    } catch (_) {
+      if (mounted) {
+        _showToast('防火墙修复失败，请以管理员身份运行或手动放行端口');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _repairingFirewall = false;
+        });
+      }
+    }
+  }
+
+  String _firewallRepairSummary(WindowsFirewallRepairResult result) {
+    final log = result.log?.trim();
+    if (log == null || log.isEmpty) return result.message;
+    final lines = log
+        .split(RegExp(r'\r?\n'))
+        .where((line) {
+          return line.trim().isNotEmpty;
+        })
+        .toList(growable: false);
+    if (lines.isEmpty) return result.message;
+    return lines.last.length > 80
+        ? '${lines.last.substring(0, 80)}...'
+        : lines.last;
+  }
+
   Future<void> _setMinimizeToTrayEnabled(bool enabled) async {
     setState(() {
       _minimizeToTrayEnabled = enabled;
@@ -804,12 +963,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
-  void _upsertDevice(DiscoveredDevice device) {
+  void _upsertDevice(DiscoveredDevice device, {bool force = false}) {
     if (!mounted) return;
     // The user deleted this conversation this session; ignore its discovery
     // re-announces so it does not silently come back. A fresh inbound message
     // clears the dismissal (see _handleIncomingMessage).
-    if (_dismissedFingerprints.contains(device.fingerprint)) return;
+    if (!force && _dismissedFingerprints.contains(device.fingerprint)) return;
+    if (force) {
+      _dismissedFingerprints.remove(device.fingerprint);
+    }
     // The conversation list is re-sorted by lastSeen on every announce, so a
     // bare positional _selected would silently jump to a different peer when
     // any other device re-announces. Pin the selection to its stable key and
@@ -942,10 +1104,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
   Future<void> _handleIncomingMessage(NearSendMessage message) async {
     if (!mounted) return;
-    final fingerprint = message.senderFingerprint.isEmpty
-        ? 'incoming-${message.senderAlias}'
-        : message.senderFingerprint;
-    final device = _devices[fingerprint];
+    final incomingDevice = message.senderDevice;
+    final fingerprint =
+        incomingDevice?.fingerprint ??
+        (message.senderFingerprint.isEmpty
+            ? 'incoming-${message.senderAlias}'
+            : message.senderFingerprint);
+    final device = incomingDevice ?? _devices[fingerprint];
     final attachment = await _incomingAttachment(message.attachment);
     if (!mounted) return;
     if (attachment != null) {
@@ -961,6 +1126,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     setState(() {
       // A new inbound message un-deletes a previously dismissed conversation.
       _dismissedFingerprints.remove(fingerprint);
+      if (incomingDevice != null) {
+        _devices[incomingDevice.fingerprint] = incomingDevice;
+      }
       _deviceConversations[fingerprint] =
           (_deviceConversations[fingerprint] ??
                   Conversation(
@@ -975,6 +1143,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     files: [],
                     device: device,
                   ))
+              .copyWith(device: device)
               .appendMessage(
                 chatMessage,
                 subtitle: _messageSubtitle(chatMessage),
@@ -983,6 +1152,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
     unawaited(_saveConversations());
     _scrollToBottom();
+  }
+
+  void _handleInboundDiagnostic(String source) {
+    if (!mounted) return;
+    setState(() {
+      _lastInboundRequest =
+          '${DateTime.now().toIso8601String().substring(11, 19)} $source';
+    });
   }
 
   void _handleIncomingTransferRequest(IncomingTransferRequest request) {
@@ -1079,13 +1256,17 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final index = _transferTasks.indexWhere((item) => item.id == sessionId);
     if (index == -1) return;
     final task = _transferTasks[index];
-    final nextReceived = (task.receivedFiles + 1).clamp(0, task.fileCount);
-    final complete = nextReceived >= task.fileCount;
+    final fileCount = task.fileCount <= 0 ? 1 : task.fileCount;
+    final nextReceived = (task.receivedFiles + 1).clamp(0, fileCount);
+    final complete = nextReceived >= fileCount;
+    final progress = complete
+        ? 1.0
+        : (nextReceived / fileCount).clamp(0.0, 1.0);
     _incomingTransferRequests.remove(sessionId);
     _upsertTransferTask(
       task.copyWith(
         receivedFiles: nextReceived,
-        progress: complete ? 1 : (nextReceived / task.fileCount),
+        progress: progress,
         status: complete
             ? TransferTaskStatus.completed
             : TransferTaskStatus.transferring,
@@ -1532,7 +1713,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       context: context,
       builder: (context) => _ManualConnectDialog(
         initialIp: prefix,
-        initialPort: LocalSendIdentity.defaultPort.toString(),
+        initialPort: _discoveryService.boundPort.toString(),
         onInvalid: () => _showToast('请输入有效的 IP 地址和端口号'),
       ),
     );
@@ -1685,14 +1866,18 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     try {
       final device = await _manualConnector.connect(host: host, port: port);
       if (!mounted) return;
-      _upsertDevice(device);
+      _upsertDevice(device, force: true);
       final selectedIndex = _networkConversationKeys.indexOf(
         device.fingerprint,
       );
       setState(() {
         if (selectedIndex >= 0) {
           _selected = selectedIndex;
+        } else {
+          _selected = _indexForSelectionKey('net:${device.fingerprint}');
         }
+        _activeSection = _MainSection.chats;
+        _mobileChatOpen = true;
         _scanStatus = '已手动连接 ${device.alias}';
       });
     } on ManualConnectException catch (error) {
@@ -1950,7 +2135,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       final index = _transferTasks.indexWhere((item) => item.id == id);
       if (index == -1) return;
       _transferTasks[index] = _transferTasks[index].copyWith(
-        progress: progress,
+        progress: progress?.clamp(0.0, 1.0),
         status: status,
         subtitle: subtitle,
         receivedFiles: receivedFiles,
@@ -2210,6 +2395,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   void _showSettingsSection() {
+    unawaited(_refreshLocalEndpoints());
+    unawaited(_refreshLocalHttpStatus());
     setState(() {
       _activeSection = _MainSection.settings;
       _messageSelectionMode = false;
@@ -2612,6 +2799,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     showImageCopyButton: _showImageCopyButton,
                     minimizeToTrayEnabled: _minimizeToTrayEnabled,
                     restoringWindowSettings: _restoringSettings,
+                    firewallStatus: _firewallStatus,
+                    lastFirewallRepair: _lastFirewallRepair,
+                    lastInboundRequest: _lastInboundRequest,
+                    localEndpoints: _localEndpointLines,
+                    localHttpStatus: _localHttpStatus,
+                    checkingFirewall: _checkingFirewall,
+                    repairingFirewall: _repairingFirewall,
                     tempCleanupService: _tempCleanup,
                     onAutoSaveChanged: (value) => setState(() {
                       _autoSaveEnabled = value;
@@ -2620,6 +2814,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onShowImageCopyButtonChanged: _setShowImageCopyButton,
                     onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
                     onChooseDirectory: _chooseAutoSaveDirectory,
+                    onRefreshFirewall: _refreshReceiveDiagnostics,
+                    onRepairFirewall: _repairFirewall,
                     onMenu: showDrawer ? _openNavDrawer : null,
                   ),
                 )
@@ -3431,8 +3627,15 @@ class _ManualConnectDialogState extends State<_ManualConnectDialog> {
   }
 
   void _submit() {
-    final host = _ipController.text.trim();
-    final port = int.tryParse(_portController.text.trim());
+    var host = _ipController.text.trim();
+    var port = int.tryParse(_portController.text.trim());
+    final endpointMatch = RegExp(
+      r'^(?:https?://)?([^:/\s]+):(\d{1,5})/?$',
+    ).firstMatch(host);
+    if (endpointMatch != null) {
+      host = endpointMatch.group(1) ?? host;
+      port = int.tryParse(endpointMatch.group(2) ?? '');
+    }
     if (host.isEmpty || port == null || port < 1 || port > 65535) {
       widget.onInvalid();
       return;
@@ -3795,11 +3998,20 @@ class SettingsPage extends StatelessWidget {
     required this.showImageCopyButton,
     required this.minimizeToTrayEnabled,
     required this.restoringWindowSettings,
+    this.firewallStatus,
+    this.lastFirewallRepair,
+    this.lastInboundRequest,
+    this.localEndpoints = const [],
+    this.localHttpStatus,
+    this.checkingFirewall = false,
+    this.repairingFirewall = false,
     required this.onAutoSaveChanged,
     required this.onOverwriteSameNameFilesChanged,
     required this.onShowImageCopyButtonChanged,
     required this.onMinimizeToTrayChanged,
     required this.onChooseDirectory,
+    this.onRefreshFirewall,
+    this.onRepairFirewall,
     this.tempCleanupService,
     this.onShowTempCleanup,
     this.onMenu,
@@ -3811,11 +4023,20 @@ class SettingsPage extends StatelessWidget {
   final bool showImageCopyButton;
   final bool minimizeToTrayEnabled;
   final bool restoringWindowSettings;
+  final WindowsFirewallStatus? firewallStatus;
+  final WindowsFirewallRepairResult? lastFirewallRepair;
+  final String? lastInboundRequest;
+  final List<String> localEndpoints;
+  final String? localHttpStatus;
+  final bool checkingFirewall;
+  final bool repairingFirewall;
   final ValueChanged<bool> onAutoSaveChanged;
   final ValueChanged<bool> onOverwriteSameNameFilesChanged;
   final ValueChanged<bool> onShowImageCopyButtonChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final VoidCallback onChooseDirectory;
+  final VoidCallback? onRefreshFirewall;
+  final VoidCallback? onRepairFirewall;
   final TempFileCleanupService? tempCleanupService;
   final VoidCallback? onShowTempCleanup;
   final VoidCallback? onMenu;
@@ -4067,6 +4288,18 @@ class SettingsPage extends StatelessWidget {
                 // Tray/minimize is a desktop-only feature.
                 if (Platform.isWindows) ...[
                   const SizedBox(height: 14),
+                  FirewallRepairCard(
+                    status: firewallStatus,
+                    lastRepair: lastFirewallRepair,
+                    lastInboundRequest: lastInboundRequest,
+                    localEndpoints: localEndpoints,
+                    localHttpStatus: localHttpStatus,
+                    checking: checkingFirewall,
+                    repairing: repairingFirewall,
+                    onRefresh: onRefreshFirewall ?? () {},
+                    onRepair: onRepairFirewall ?? () {},
+                  ),
+                  const SizedBox(height: 14),
                   _SettingsSwitchCard(
                     icon: Icons.system_update_alt_rounded,
                     title: '最小化到托盘',
@@ -4152,6 +4385,273 @@ class _SettingsSwitchCard extends StatelessWidget {
               onChanged: onChanged,
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class FirewallRepairCard extends StatelessWidget {
+  const FirewallRepairCard({
+    super.key,
+    required this.status,
+    required this.lastRepair,
+    required this.lastInboundRequest,
+    required this.localEndpoints,
+    required this.localHttpStatus,
+    required this.checking,
+    required this.repairing,
+    required this.onRefresh,
+    required this.onRepair,
+  });
+
+  final WindowsFirewallStatus? status;
+  final WindowsFirewallRepairResult? lastRepair;
+  final String? lastInboundRequest;
+  final List<String> localEndpoints;
+  final String? localHttpStatus;
+  final bool checking;
+  final bool repairing;
+  final VoidCallback onRefresh;
+  final VoidCallback onRepair;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = status;
+    final ok =
+        lastInboundRequest != null ||
+        (current != null && !current.needsRepair && current.error == null);
+    final title = checking
+        ? '正在检测防火墙'
+        : ok
+        ? '防火墙已放行'
+        : '防火墙可能阻止接收';
+    final description = current?.error != null
+        ? '检测失败：${current!.error}'
+        : ok
+        ? '已允许 NearSend TCP ${WindowsFirewallService.ports}、UDP ${WindowsFirewallService.discoveryPorts} 入站。'
+        : '平板发不到电脑时，需要允许 TCP ${WindowsFirewallService.ports}、UDP ${WindowsFirewallService.discoveryPorts} 入站。';
+    final icon = ok
+        ? Icons.verified_user_rounded
+        : Icons.security_update_warning_rounded;
+    final iconColor = ok ? const Color(0xFF27A95D) : _warning;
+    final diagnosticText = _diagnosticText(current, lastRepair);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: _accentSoft,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          color: _text,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        description,
+                        style: TextStyle(color: _muted, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _FirewallStatusChip(
+                  label: 'TCP',
+                  ok: current?.tcpAllowed == true,
+                  loading: checking,
+                ),
+                _FirewallStatusChip(
+                  label: 'UDP',
+                  ok: current?.udpAllowed == true,
+                  loading: checking,
+                ),
+                _FirewallStatusChip(
+                  label: '程序',
+                  ok: current?.programAllowed == true,
+                  loading: checking,
+                ),
+                _FirewallStatusChip(
+                  label: '防火墙',
+                  ok: current?.firewallEnabled != true || ok,
+                  loading: checking,
+                ),
+                _FirewallStatusChip(
+                  label: '本地规则',
+                  ok: current?.localRulesAllowed != false,
+                  loading: checking,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SelectableText(
+              lastInboundRequest == null
+                  ? 'last inbound: none'
+                  : 'last inbound: $lastInboundRequest',
+              style: TextStyle(
+                color: _muted,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 10),
+            SelectableText(
+              localHttpStatus == null
+                  ? 'local http: unchecked'
+                  : 'local http: $localHttpStatus',
+              style: TextStyle(
+                color: _muted,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 10),
+            SelectableText(
+              localEndpoints.isEmpty
+                  ? 'local endpoints: none'
+                  : 'local endpoints:\n${localEndpoints.join('\n')}',
+              style: TextStyle(
+                color: _muted,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                ShadButton.outline(
+                  onPressed: checking || repairing ? null : onRefresh,
+                  height: 34,
+                  child: Text(checking ? '检测中' : '重新检测'),
+                ),
+                const SizedBox(width: 8),
+                ShadButton.outline(
+                  onPressed: localEndpoints.isEmpty
+                      ? null
+                      : () {
+                          Clipboard.setData(
+                            ClipboardData(text: localEndpoints.join('\n')),
+                          );
+                        },
+                  height: 34,
+                  child: const Text('复制地址'),
+                ),
+                const SizedBox(width: 8),
+                ShadButton(
+                  onPressed: checking || repairing ? null : onRepair,
+                  height: 34,
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.white,
+                  hoverForegroundColor: Colors.white,
+                  child: Text(repairing ? '等待授权' : '一键修复'),
+                ),
+              ],
+            ),
+            if (diagnosticText != null) ...[
+              const SizedBox(height: 12),
+              SelectableText(
+                diagnosticText,
+                maxLines: 5,
+                style: TextStyle(
+                  color: _muted,
+                  fontSize: 12,
+                  height: 1.35,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String? _diagnosticText(
+    WindowsFirewallStatus? status,
+    WindowsFirewallRepairResult? repair,
+  ) {
+    final parts = <String>[];
+    if (repair != null && !repair.success) {
+      parts.add('repair: ${repair.message}');
+      final log = repair.log?.trim();
+      if (log != null && log.isNotEmpty) {
+        parts.add(log);
+      }
+    }
+    final details = status?.details?.trim();
+    if (status != null &&
+        status.needsRepair &&
+        details != null &&
+        details.isNotEmpty) {
+      parts.add('detect: $details');
+    }
+    if (parts.isEmpty) return null;
+    return parts.join('\n');
+  }
+}
+
+class _FirewallStatusChip extends StatelessWidget {
+  const _FirewallStatusChip({
+    required this.label,
+    required this.ok,
+    required this.loading,
+  });
+
+  final String label;
+  final bool ok;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = loading
+        ? _muted
+        : ok
+        ? const Color(0xFF27A95D)
+        : _warning;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        loading ? '$label 检测中' : '$label ${ok ? "已放行" : "未放行"}',
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -4770,13 +5270,11 @@ class TransferTaskCard extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 14),
-          ShadProgress(
+          StableProgressBar(
             value: progress,
-            minHeight: 6,
+            height: 6,
             color: _accent,
             backgroundColor: _accentSoft,
-            borderRadius: const BorderRadius.all(Radius.circular(999)),
-            innerBorderRadius: const BorderRadius.all(Radius.circular(999)),
           ),
           const SizedBox(height: 10),
           Row(
@@ -7042,6 +7540,44 @@ class MessageStatusIcon extends StatelessWidget {
   }
 }
 
+class StableProgressBar extends StatelessWidget {
+  const StableProgressBar({
+    super.key,
+    required this.value,
+    required this.height,
+    required this.color,
+    required this.backgroundColor,
+  });
+
+  final double? value;
+  final double height;
+  final Color color;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalized = (value ?? 0).clamp(0.0, 1.0);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: ColoredBox(
+        color: backgroundColor,
+        child: SizedBox(
+          height: height,
+          width: double.infinity,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FractionallySizedBox(
+              widthFactor: normalized,
+              heightFactor: 1,
+              child: ColoredBox(color: color),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class MessageStatusPill extends StatelessWidget {
   const MessageStatusPill({super.key, required this.status});
 
@@ -7128,15 +7664,7 @@ class MessageContent extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.file(
-            File(attachment.path),
-            width: 260,
-            height: 180,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              return AttachmentTile(attachment: attachment);
-            },
-          ),
+          child: AttachmentImagePreview(attachment: attachment),
         ),
       );
     } else {
@@ -7164,6 +7692,31 @@ class MessageContent extends StatelessWidget {
           child: content,
         ),
       ],
+    );
+  }
+}
+
+class AttachmentImagePreview extends StatelessWidget {
+  const AttachmentImagePreview({super.key, required this.attachment});
+
+  final MessageAttachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = AttachmentTile(attachment: attachment);
+    return SizedBox(
+      width: 260,
+      height: 180,
+      child: Image.file(
+        File(attachment.path),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (context, error, stackTrace) => fallback,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded || frame != null) return child;
+          return fallback;
+        },
+      ),
     );
   }
 }
@@ -7369,15 +7922,11 @@ class FileCard extends StatelessWidget {
                 const SizedBox(height: 5),
                 Text(file.size, style: TextStyle(color: _muted, fontSize: 12)),
                 const SizedBox(height: 8),
-                ShadProgress(
+                StableProgressBar(
                   value: file.progress / 100,
-                  minHeight: 5,
+                  height: 5,
                   color: _accent,
                   backgroundColor: const Color(0xFFEFECE3),
-                  borderRadius: const BorderRadius.all(Radius.circular(999)),
-                  innerBorderRadius: const BorderRadius.all(
-                    Radius.circular(999),
-                  ),
                 ),
               ],
             ),
@@ -7618,13 +8167,7 @@ class PendingAttachmentTile extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(7),
                 child: attachment.isImage
-                    ? Image.file(
-                        File(attachment.path),
-                        fit: BoxFit.cover,
-                        errorBuilder: (context, error, stackTrace) {
-                          return _PendingFilePreview(attachment: attachment);
-                        },
-                      )
+                    ? PendingAttachmentImagePreview(attachment: attachment)
                     : _PendingFilePreview(attachment: attachment),
               ),
             ),
@@ -7652,6 +8195,27 @@ class PendingAttachmentTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class PendingAttachmentImagePreview extends StatelessWidget {
+  const PendingAttachmentImagePreview({super.key, required this.attachment});
+
+  final MessageAttachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = _PendingFilePreview(attachment: attachment);
+    return Image.file(
+      File(attachment.path),
+      fit: BoxFit.cover,
+      gaplessPlayback: true,
+      errorBuilder: (context, error, stackTrace) => fallback,
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (wasSynchronouslyLoaded || frame != null) return child;
+        return fallback;
+      },
     );
   }
 }
@@ -7753,6 +8317,7 @@ class Conversation {
     int? unread,
     List<ChatMessage>? messages,
     List<TransferFile>? files,
+    DiscoveredDevice? device,
   }) {
     return Conversation(
       title: title ?? this.title,
@@ -7763,7 +8328,7 @@ class Conversation {
       unread: unread ?? this.unread,
       messages: messages ?? this.messages,
       files: files ?? this.files,
-      device: device,
+      device: device ?? this.device,
       ephemeral: ephemeral,
     );
   }

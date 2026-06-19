@@ -99,13 +99,18 @@ class DiscoveredDevice {
     return String.fromCharCode(trimmed.runes.first).toUpperCase();
   }
 
-  DiscoveredDevice copyWith({DateTime? lastSeen}) {
+  DiscoveredDevice copyWith({
+    DateTime? lastSeen,
+    String? ip,
+    int? port,
+    bool? https,
+  }) {
     return DiscoveredDevice(
       alias: alias,
-      ip: ip,
+      ip: ip ?? this.ip,
       version: version,
-      port: port,
-      https: https,
+      port: port ?? this.port,
+      https: https ?? this.https,
       fingerprint: fingerprint,
       deviceType: deviceType,
       download: download,

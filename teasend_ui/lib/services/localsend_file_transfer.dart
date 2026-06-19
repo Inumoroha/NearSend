@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../models/discovered_device.dart';
 import '../models/nearsend_message.dart';
+import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
 
 /// Thrown when an in-flight upload is aborted via [TransferHandle.cancel].
@@ -46,11 +47,13 @@ class TransferHandle {
 class LocalSendFileTransferService {
   LocalSendFileTransferService({
     required this.identity,
+    int Function()? boundPort,
     this.requireReceiveConfirmation = false,
     this.shouldConfirmIncoming,
-  });
+  }) : boundPort = boundPort ?? (() => identity.port);
 
   final LocalSendIdentity identity;
+  final int Function() boundPort;
   final bool requireReceiveConfirmation;
   final bool Function(String senderFingerprint)? shouldConfirmIncoming;
   final _incomingController = StreamController<NearSendMessage>.broadcast();
@@ -88,6 +91,14 @@ class LocalSendFileTransferService {
     final senderFingerprint = sender is Map<String, dynamic>
         ? sender['fingerprint']?.toString() ?? ''
         : '';
+    final senderDevice = sender is Map<String, dynamic>
+        ? DiscoveredDevice.fromLocalSendJson(
+            sender,
+            request.connectionInfo?.remoteAddress.address ?? '',
+            fallbackPort: identity.port,
+            fallbackHttps: identity.https,
+          )
+        : null;
     final files = <String, _IncomingFile>{};
     final responseFiles = <String, String>{};
 
@@ -113,6 +124,7 @@ class LocalSendFileTransferService {
       senderAlias: senderAlias,
       senderFingerprint: senderFingerprint,
       files: files,
+      senderDevice: senderDevice,
     );
 
     final requiresConfirmation =
@@ -200,6 +212,7 @@ class LocalSendFileTransferService {
         receivedAt: DateTime.now(),
         sessionId: session.sessionId,
         fileId: incoming.id,
+        senderDevice: session.senderDevice,
         attachment: NearSendAttachment(
           path: file.path,
           name: incoming.name,
@@ -279,9 +292,14 @@ class LocalSendFileTransferService {
     }
 
     final totalBytes = files.fold<int>(0, (sum, file) => sum + file.size);
-    final prepareResponse = await _prepareUpload(target: target, files: files);
+    final resolved = await _prepareUploadWithFallback(
+      target: target,
+      files: files,
+    );
+    final prepareResponse = resolved.response;
+    final uploadTarget = resolved.target;
     final remoteSessionId = prepareResponse.sessionId;
-    handle?._bindRemote(target, remoteSessionId);
+    handle?._bindRemote(uploadTarget, remoteSessionId);
     var uploadedAny = false;
     var sentBefore = 0;
 
@@ -290,7 +308,7 @@ class LocalSendFileTransferService {
       if (token == null) continue;
       uploadedAny = true;
       await _upload(
-        target: target,
+        target: uploadTarget,
         path: file.path,
         fileId: file.id,
         token: token,
@@ -352,7 +370,7 @@ class LocalSendFileTransferService {
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({
-          'info': identity.registerJson(),
+          'info': _registerMessage(),
           'files': {
             for (final file in files)
               file.id: {
@@ -392,6 +410,29 @@ class LocalSendFileTransferService {
     } finally {
       client.close(force: true);
     }
+  }
+
+  Future<_ResolvedPrepareUpload> _prepareUploadWithFallback({
+    required DiscoveredDevice target,
+    required List<_OutgoingFile> files,
+  }) async {
+    Object? lastError;
+    for (final port in _candidatePorts(target.port)) {
+      final candidate = target.copyWith(port: port);
+      try {
+        final response = await _prepareUpload(target: candidate, files: files);
+        return _ResolvedPrepareUpload(target: candidate, response: response);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    final error = lastError;
+    if (error is Exception) throw error;
+    throw HttpException('prepare-upload failed: $error');
+  }
+
+  Iterable<int> _candidatePorts(int preferredPort) {
+    return {preferredPort, ...LocalSendDiscoveryServer.fallbackPorts};
   }
 
   Future<void> _upload({
@@ -481,6 +522,14 @@ class LocalSendFileTransferService {
     };
   }
 
+  Map<String, Object?> _registerMessage() {
+    return {
+      ...identity.infoJson(),
+      'port': boundPort(),
+      'protocol': identity.protocol,
+    };
+  }
+
   int _parseSize(Object? value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
@@ -545,12 +594,14 @@ class _ReceiveSession {
     required this.senderAlias,
     required this.senderFingerprint,
     required this.files,
+    this.senderDevice,
   });
 
   final String sessionId;
   final String senderAlias;
   final String senderFingerprint;
   final Map<String, _IncomingFile> files;
+  final DiscoveredDevice? senderDevice;
   final decision = Completer<bool>();
   bool cancelled = false;
 }
@@ -592,4 +643,11 @@ class _PrepareUploadResponse {
 
   final String? sessionId;
   final Map<String, String> files;
+}
+
+class _ResolvedPrepareUpload {
+  const _ResolvedPrepareUpload({required this.target, required this.response});
+
+  final DiscoveredDevice target;
+  final _PrepareUploadResponse response;
 }

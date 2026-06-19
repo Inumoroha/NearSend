@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'discovered_device.dart';
+
 enum NearSendPayloadType { text, image, file }
 
 class NearSendAttachment {
@@ -39,6 +41,7 @@ class NearSendMessage {
     this.attachment,
     this.sessionId,
     this.fileId,
+    this.senderDevice,
   });
 
   final String senderFingerprint;
@@ -48,6 +51,7 @@ class NearSendMessage {
   final NearSendAttachment? attachment;
   final String? sessionId;
   final String? fileId;
+  final DiscoveredDevice? senderDevice;
 }
 
 extension NearSendPayloadTypeX on NearSendPayloadType {

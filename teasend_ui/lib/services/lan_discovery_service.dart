@@ -36,13 +36,16 @@ class LanDiscoveryService {
   StreamSubscription<DiscoveredDevice>? _serverSubscription;
   Timer? _announceTimer;
   bool _started = false;
+  Future<void>? _starting;
   bool _probing = false;
 
   Stream<DiscoveredDevice> get devices => _deviceController.stream;
   Stream<NearSendMessage> get messages => _server.messages;
+  Stream<String> get diagnostics => _server.diagnostics;
   Stream<IncomingTransferRequest> get incomingRequests =>
       _server.incomingRequests;
   int get boundPort => _server.boundPort;
+  bool get isRunning => _server.isRunning;
 
   bool acceptIncomingTransfer(String sessionId) =>
       _server.acceptIncomingTransfer(sessionId);
@@ -58,30 +61,61 @@ class LanDiscoveryService {
           _LocalAddressCandidate(interface, address),
     ]..sort(_compareLocalAddressCandidates);
 
-    if (candidates.isEmpty) return [];
-    final best = candidates.first;
-    return ['${best.address.address}:$boundPort'];
+    return [
+      for (final candidate in candidates)
+        '${candidate.address.address}:$boundPort',
+    ];
   }
 
   Future<void> start() async {
     if (_started) return;
-    _started = true;
+    final starting = _starting;
+    if (starting != null) {
+      await starting;
+      return;
+    }
 
+    final startFuture = _start();
+    _starting = startFuture;
+    try {
+      await startFuture;
+    } finally {
+      _starting = null;
+    }
+  }
+
+  Future<void> _start() async {
     _serverSubscription = _server.devices.listen(_deviceController.add);
-    await _server.start();
+    try {
+      await _server.start();
+      _started = true;
+    } catch (_) {
+      await _serverSubscription?.cancel();
+      _serverSubscription = null;
+      _started = false;
+      rethrow;
+    }
 
-    await _bindMulticastListener();
-
-    await announce();
+    _runInBackground(_bindMulticastListener());
+    _runInBackground(announce());
 
     // 每10秒重新公告一次，确保新设备能快速发现我们
     _announceTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      announce();
+      _runInBackground(announce());
     });
   }
 
   Future<void> announce() async {
-    await Future.wait([_sendAnnouncementBurst(), _probeLocalSubnets()]);
+    if (!_server.isRunning) {
+      await start();
+      return;
+    }
+    await _sendAnnouncementBurst();
+    _runInBackground(_probeLocalSubnets());
+  }
+
+  void _runInBackground(Future<void> future) {
+    unawaited(future.catchError((_) {}));
   }
 
   Future<void> _bindMulticastListener() async {
@@ -97,7 +131,7 @@ class LanDiscoveryService {
       );
       socket.multicastHops = 1;
       socket.multicastLoopback = true;
-    } catch (e) {
+    } catch (_) {
       // Windows 上端口共享可能失败，多播监听无法工作
       // 主动探测仍可发现设备，所以静默失败
       return;
@@ -184,7 +218,9 @@ class LanDiscoveryService {
     }
     _sockets.clear();
     await _serverSubscription?.cancel();
+    _serverSubscription = null;
     await _server.dispose();
+    _started = false;
     await _deviceController.close();
   }
 
@@ -277,22 +313,25 @@ class LanDiscoveryService {
   }
 
   Future<void> _probeHost(String host) async {
-    for (final attempt in const [
-      _ProbeAttempt('http', '/api/localsend/v2/info'),
-      _ProbeAttempt('http', '/api/localsend/v1/info'),
-    ]) {
-      final device = await _tryProbeInfo(host, attempt);
-      if (device == null) continue;
-      if (device.fingerprint == identity.fingerprint) return;
+    for (final port in _probePorts()) {
+      for (final attempt in const [
+        _ProbeAttempt('http', '/api/localsend/v2/info'),
+        _ProbeAttempt('http', '/api/localsend/v1/info'),
+      ]) {
+        final device = await _tryProbeInfo(host, port, attempt);
+        if (device == null) continue;
+        if (device.fingerprint == identity.fingerprint) return;
 
-      _deviceController.add(device);
-      unawaited(_postRegister(device));
-      return;
+        _deviceController.add(device);
+        unawaited(_postRegister(device));
+        return;
+      }
     }
   }
 
   Future<DiscoveredDevice?> _tryProbeInfo(
     String host,
+    int port,
     _ProbeAttempt attempt,
   ) async {
     final client = HttpClient()..connectionTimeout = _probeConnectionTimeout;
@@ -303,7 +342,7 @@ class LanDiscoveryService {
         Uri(
           scheme: attempt.scheme,
           host: host,
-          port: identity.port,
+          port: port,
           path: attempt.path,
           queryParameters: {'fingerprint': identity.fingerprint},
         ),
@@ -322,7 +361,7 @@ class LanDiscoveryService {
       return DiscoveredDevice.fromLocalSendJson(
         decoded,
         host,
-        fallbackPort: identity.port,
+        fallbackPort: port,
         fallbackHttps: attempt.scheme == 'https',
       );
     } catch (_) {
@@ -448,7 +487,7 @@ class LanDiscoveryService {
         ),
       );
       request.headers.contentType = ContentType.json;
-      request.write(jsonEncode(identity.registerJson()));
+      request.write(jsonEncode(_registerMessage()));
       final response = await request.close().timeout(
         const Duration(seconds: 2),
       );
@@ -462,9 +501,27 @@ class LanDiscoveryService {
   }
 
   Map<String, Object?> _multicastMessage({required bool announce}) {
-    final message = identity.multicastJson(announce: announce);
-    message['port'] = boundPort;
-    return message;
+    return {
+      ..._registerMessage(),
+      'announcement': announce,
+      'announce': announce,
+    };
+  }
+
+  Map<String, Object?> _registerMessage() {
+    return {
+      ...identity.infoJson(),
+      'port': boundPort,
+      'protocol': identity.protocol,
+    };
+  }
+
+  List<int> _probePorts() {
+    return {
+      identity.port,
+      boundPort,
+      ...LocalSendDiscoveryServer.fallbackPorts,
+    }.toList(growable: false);
   }
 }
 

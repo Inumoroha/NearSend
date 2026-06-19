@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +6,28 @@ import 'package:nearsend/services/localsend_discovery_server.dart';
 import 'package:nearsend/services/localsend_identity.dart';
 
 void main() {
+  test(
+    'falls back to the next port when the preferred port is occupied',
+    () async {
+      final occupied = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+      final preferredPort = occupied.port;
+      final identity = LocalSendIdentity(
+        alias: 'NearSend Test',
+        port: preferredPort,
+      );
+      final server = LocalSendDiscoveryServer(identity: identity);
+
+      try {
+        await server.start();
+
+        expect(server.boundPort, isNot(preferredPort));
+      } finally {
+        await server.dispose();
+        await occupied.close(force: true);
+      }
+    },
+  );
+
   test('serves LocalSend v2 info and register endpoints', () async {
     final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
     final server = LocalSendDiscoveryServer(identity: identity);
@@ -26,6 +48,8 @@ void main() {
       expect(infoBody['alias'], 'NearSend Test');
       expect(infoBody['version'], LocalSendIdentity.protocolVersion);
       expect(infoBody['fingerprint'], identity.fingerprint);
+      expect(infoBody['port'], port);
+      expect(infoBody['protocol'], 'http');
 
       final registerRequest = await client.postUrl(
         Uri.http('127.0.0.1:$port', '/api/localsend/v2/register'),
@@ -51,6 +75,7 @@ void main() {
       expect(registerResponse.statusCode, HttpStatus.ok);
       expect(registerBody['alias'], 'NearSend Test');
       expect(registerBody['fingerprint'], identity.fingerprint);
+      expect(registerBody['port'], port);
     } finally {
       await server.dispose();
     }
@@ -85,6 +110,37 @@ void main() {
       expect(textResponse.statusCode, HttpStatus.ok);
       expect(textMessage.text, 'hello');
       expect(textMessage.senderAlias, 'Peer');
+
+      final deviceFuture = server.messages.first;
+      final deviceRequest = await client.postUrl(
+        Uri.http('127.0.0.1:$port', '/api/nearsend/v1/message'),
+      );
+      deviceRequest.headers.contentType = ContentType.json;
+      deviceRequest.write(
+        jsonEncode({
+          'senderFingerprint': 'peer-fingerprint',
+          'senderAlias': 'Peer',
+          'text': 'reply target',
+          'senderDevice': {
+            'alias': 'Peer',
+            'version': '2.1',
+            'deviceModel': 'Windows',
+            'deviceType': 'desktop',
+            'fingerprint': 'peer-fingerprint',
+            'port': 53318,
+            'protocol': 'http',
+            'download': false,
+          },
+        }),
+      );
+      final deviceResponse = await deviceRequest.close();
+      await deviceResponse.drain<void>();
+      final deviceMessage = await deviceFuture;
+
+      expect(deviceResponse.statusCode, HttpStatus.ok);
+      expect(deviceMessage.senderDevice?.fingerprint, 'peer-fingerprint');
+      expect(deviceMessage.senderDevice?.ip, '127.0.0.1');
+      expect(deviceMessage.senderDevice?.port, 53318);
 
       final attachmentFuture = server.messages.first;
       final attachmentRequest = await client.postUrl(
