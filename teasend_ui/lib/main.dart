@@ -4418,8 +4418,9 @@ class FirewallRepairCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final current = status;
+    final hasInbound = lastInboundRequest != null;
     final ok =
-        lastInboundRequest != null ||
+        hasInbound ||
         (current != null && !current.needsRepair && current.error == null);
     final title = checking
         ? '正在检测防火墙'
@@ -4435,7 +4436,11 @@ class FirewallRepairCard extends StatelessWidget {
         ? Icons.verified_user_rounded
         : Icons.security_update_warning_rounded;
     final iconColor = ok ? const Color(0xFF27A95D) : _warning;
-    final diagnosticText = _diagnosticText(current, lastRepair);
+    final diagnosticText = _diagnosticText(
+      current,
+      lastRepair,
+      hasInbound: hasInbound,
+    );
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -4489,17 +4494,17 @@ class FirewallRepairCard extends StatelessWidget {
               children: [
                 _FirewallStatusChip(
                   label: 'TCP',
-                  ok: current?.tcpAllowed == true,
+                  ok: hasInbound || current?.tcpAllowed == true,
                   loading: checking,
                 ),
                 _FirewallStatusChip(
                   label: 'UDP',
-                  ok: current?.udpAllowed == true,
+                  ok: hasInbound || current?.udpAllowed == true,
                   loading: checking,
                 ),
                 _FirewallStatusChip(
                   label: '程序',
-                  ok: current?.programAllowed == true,
+                  ok: hasInbound || current?.programAllowed == true,
                   loading: checking,
                 ),
                 _FirewallStatusChip(
@@ -4599,10 +4604,11 @@ class FirewallRepairCard extends StatelessWidget {
 
   String? _diagnosticText(
     WindowsFirewallStatus? status,
-    WindowsFirewallRepairResult? repair,
-  ) {
+    WindowsFirewallRepairResult? repair, {
+    required bool hasInbound,
+  }) {
     final parts = <String>[];
-    if (repair != null && !repair.success) {
+    if (!hasInbound && repair != null && !repair.success) {
       parts.add('repair: ${repair.message}');
       final log = repair.log?.trim();
       if (log != null && log.isNotEmpty) {
@@ -4611,6 +4617,7 @@ class FirewallRepairCard extends StatelessWidget {
     }
     final details = status?.details?.trim();
     if (status != null &&
+        !hasInbound &&
         status.needsRepair &&
         details != null &&
         details.isNotEmpty) {
@@ -7650,7 +7657,7 @@ class MessageContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final attachment = message.attachment;
     if (attachment == null) {
-      return Text(
+      return SelectableText(
         message.text,
         style: TextStyle(color: _text, fontSize: 14, height: 1.55),
       );
@@ -7676,7 +7683,7 @@ class MessageContent extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (message.text.trim().isNotEmpty) ...[
-          Text(
+          SelectableText(
             message.text,
             style: TextStyle(color: _text, fontSize: 14, height: 1.55),
           ),

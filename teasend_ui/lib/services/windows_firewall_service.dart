@@ -23,7 +23,8 @@ class WindowsFirewallStatus {
   final String? details;
 
   bool get needsRepair =>
-      supported && (!tcpAllowed || !udpAllowed || !localRulesAllowed);
+      supported &&
+      (!tcpAllowed || !udpAllowed || !programAllowed || !localRulesAllowed);
 }
 
 class WindowsFirewallService {
@@ -274,11 +275,43 @@ $log = Join-Path $env:TEMP 'nearsend_firewall_repair.log'
 function Write-RepairLog($message) {
   Add-Content -Path $log -Value ("[{0}] {1}" -f (Get-Date -Format s), $message)
 }
+function Normalize-ProgramPath($path) {
+  if ([string]::IsNullOrWhiteSpace($path) -or $path -eq 'Any') {
+    return $path
+  }
+  try {
+    return [System.IO.Path]::GetFullPath($path).TrimEnd('\').ToLowerInvariant()
+  } catch {
+    return ([string]$path).TrimEnd('\').ToLowerInvariant()
+  }
+}
+function Get-TargetPrograms() {
+  @($program, $debugProgram, $releaseProgram) |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) } |
+    Select-Object -Unique
+}
+function Remove-ProgramRulesByPath() {
+  $targetPrograms = @(Get-TargetPrograms | ForEach-Object { Normalize-ProgramPath $_ })
+  if ($targetPrograms.Count -eq 0) { return }
+  Get-NetFirewallRule -Direction Inbound -ErrorAction SilentlyContinue | ForEach-Object {
+    $rule = $_
+    try {
+      $appFilter = $rule | Get-NetFirewallApplicationFilter -ErrorAction Stop
+      $ruleProgram = [string]$appFilter.Program
+      if ($targetPrograms -contains (Normalize-ProgramPath $ruleProgram)) {
+        Write-RepairLog ('Removing existing program rule: ' + $rule.DisplayName + ' -> ' + $ruleProgram)
+        $rule | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+      }
+    } catch {
+    }
+  }
+}
 Remove-Item $log -ErrorAction SilentlyContinue
 try {
   Write-RepairLog 'Starting firewall repair'
   Set-NetFirewallProfile -Profile Domain,Private,Public -AllowLocalFirewallRules True -AllowInboundRules True -ErrorAction Stop
   Write-RepairLog 'Enabled local firewall rules for all profiles'
+  Remove-ProgramRulesByPath
   Get-NetFirewallRule -DisplayName $tcpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   Get-NetFirewallRule -DisplayName $oldTcpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
   Get-NetFirewallRule -DisplayName $udpRule -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
@@ -301,6 +334,9 @@ try {
 }
 try {
   netsh advfirewall set allprofiles settings localfirewallrules enable | Out-Null
+  foreach ($targetProgram in (Get-TargetPrograms)) {
+    netsh advfirewall firewall delete rule name=all dir=in program="$targetProgram" | Out-Null
+  }
   netsh advfirewall firewall delete rule name="$tcpRule" | Out-Null
   netsh advfirewall firewall delete rule name="$oldTcpRule" | Out-Null
   netsh advfirewall firewall delete rule name="$udpRule" | Out-Null
