@@ -234,6 +234,8 @@ void main() {
 
       expect(uploadResponse.statusCode, HttpStatus.ok);
       expect(message.senderAlias, 'LocalSend Peer');
+      expect(message.senderDevice?.fingerprint, 'peer-fingerprint');
+      expect(message.senderDevice?.deviceModel, 'Windows');
       expect(message.attachment?.name, 'hello.txt');
       expect(
         await File(message.attachment!.path).readAsString(),
@@ -341,7 +343,13 @@ void main() {
           jsonEncode({
             'info': {
               'alias': 'LocalSend Peer',
+              'version': '2.1',
+              'deviceModel': 'Windows',
+              'deviceType': 'desktop',
               'fingerprint': 'peer-fingerprint',
+              'port': 53317,
+              'protocol': 'http',
+              'download': false,
             },
             'files': {
               'file-1': {
@@ -358,6 +366,8 @@ void main() {
 
       final incoming = await requestFuture;
       expect(incoming.senderAlias, 'LocalSend Peer');
+      expect(incoming.senderDevice?.fingerprint, 'peer-fingerprint');
+      expect(incoming.senderDevice?.deviceModel, 'Windows');
       expect(incoming.files.single.name, 'confirm.txt');
 
       server.acceptIncomingTransfer(incoming.sessionId);

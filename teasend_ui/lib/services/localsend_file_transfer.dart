@@ -135,6 +135,7 @@ class LocalSendFileTransferService {
       sessionId: sessionId,
       senderAlias: senderAlias,
       senderFingerprint: senderFingerprint,
+      senderDevice: senderDevice,
       files: files.values
           .map(
             (file) => IncomingTransferFile(
@@ -564,12 +565,14 @@ class IncomingTransferRequest {
     required this.senderAlias,
     required this.senderFingerprint,
     required this.files,
+    this.senderDevice,
     this.autoAccepted = false,
   });
 
   final String sessionId;
   final String senderAlias;
   final String senderFingerprint;
+  final DiscoveredDevice? senderDevice;
   final List<IncomingTransferFile> files;
   final bool autoAccepted;
 

@@ -52,6 +52,8 @@ const _warning = Color(0xFFCB9A4B);
 Color _bubbleMe = const Color(0xFFDBEAFE);
 Color _chatBg = const Color(0xFFF8FAFC);
 const _minimizeToTrayPreferenceKey = 'minimize_to_tray';
+const _autoSaveEnabledPreferenceKey = 'auto_save_enabled';
+const _autoSaveDirectoryPreferenceKey = 'auto_save_directory';
 const _overwriteSameNameFilesPreferenceKey = 'overwrite_same_name_files';
 const _themeModePreferenceKey = 'theme_mode';
 const _themeColorPreferenceKey = 'theme_color';
@@ -60,6 +62,8 @@ const _favoriteDevicesPreferenceKey = 'favorite_device_fingerprints';
 const _showImageCopyButtonPreferenceKey = 'show_image_copy_button';
 const _deviceOfflineAfter = Duration(seconds: 120);
 const _devicePresenceRefreshInterval = Duration(seconds: 5);
+
+bool get _showFixedAndroidDownloadsDirectoryPlaceholder => false;
 
 enum AppThemeMode { light, dark }
 
@@ -387,6 +391,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   MessageAttachment? _previewImage;
   String _scanStatus = '正在监听局域网设备';
   late String _autoSaveDirectory;
+  String? _androidFallbackAutoSaveDirectory;
   _MainSection _activeSection = _MainSection.chats;
   int _selected = 0;
   // On narrow (phone) layouts, whether the full-screen chat page is open over
@@ -399,6 +404,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final List<Conversation> _conversations = [];
 
   String get _defaultAutoSaveDirectory {
+    if (Platform.isAndroid) return 'Download/NearSend';
     final userProfile = Platform.environment['USERPROFILE'];
     if (userProfile != null && userProfile.trim().isNotEmpty) {
       return p.join(userProfile, 'Downloads', 'NearSend');
@@ -415,7 +421,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       final dir = await getApplicationDocumentsDirectory();
       if (!mounted) return;
       setState(() {
-        _autoSaveDirectory = p.join(dir.path, 'NearSend');
+        _androidFallbackAutoSaveDirectory = p.join(dir.path, 'NearSend');
       });
     } catch (_) {
       // Keep whatever default was set; MediaStore is the real target anyway.
@@ -459,6 +465,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (widget.enableDiscovery) {
       // Android drops inbound multicast unless a MulticastLock is held.
       unawaited(AndroidPlatform.acquireMulticastLock());
+      unawaited(AndroidPlatform.startBackgroundReceiveService());
       _discoverySubscription = _discoveryService.devices.listen(_upsertDevice);
       _messageSubscription = _discoveryService.messages.listen(
         (message) => unawaited(_handleIncomingMessage(message)),
@@ -531,6 +538,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     _clipboardPollTimer?.cancel();
     _presenceRefreshTimer?.cancel();
     unawaited(AndroidPlatform.releaseMulticastLock());
+    unawaited(AndroidPlatform.stopBackgroundReceiveService());
     unawaited(_discoverySubscription?.cancel());
     unawaited(_messageSubscription?.cancel());
     unawaited(_diagnosticSubscription?.cancel());
@@ -574,6 +582,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   Future<void> _restoreWindowSettings() async {
     final preferences = await SharedPreferences.getInstance();
     final enabled = preferences.getBool(_minimizeToTrayPreferenceKey) ?? false;
+    final autoSaveEnabled =
+        preferences.getBool(_autoSaveEnabledPreferenceKey) ?? false;
+    final savedAutoSaveDirectory = preferences.getString(
+      _autoSaveDirectoryPreferenceKey,
+    );
     final overwriteSameNameFiles =
         preferences.getBool(_overwriteSameNameFilesPreferenceKey) ?? false;
     final savedThemeMode = preferences.getString(_themeModePreferenceKey);
@@ -603,6 +616,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (!mounted) return;
     setState(() {
       _minimizeToTrayEnabled = enabled;
+      _autoSaveEnabled = autoSaveEnabled;
+      if (savedAutoSaveDirectory != null &&
+          savedAutoSaveDirectory.trim().isNotEmpty) {
+        _autoSaveDirectory = savedAutoSaveDirectory;
+      }
       _overwriteSameNameFiles = overwriteSameNameFiles;
       _themeMode = themeMode;
       _themeColor = themeColor;
@@ -661,6 +679,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     setState(() {
       _themeColor = color;
       _applyPalette(_buildPalette(_themeMode, _themeColor));
+    });
+  }
+
+  Future<void> _setAutoSaveEnabled(bool enabled) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_autoSaveEnabledPreferenceKey, enabled);
+    if (!mounted) return;
+    setState(() {
+      _autoSaveEnabled = enabled;
     });
   }
 
@@ -1128,6 +1155,22 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _dismissedFingerprints.remove(fingerprint);
       if (incomingDevice != null) {
         _devices[incomingDevice.fingerprint] = incomingDevice;
+        final existing = _deviceConversations[incomingDevice.fingerprint];
+        if (existing != null && existing.device == null) {
+          _deviceConversations[incomingDevice.fingerprint] = Conversation(
+            title: incomingDevice.alias,
+            subtitle: existing.subtitle,
+            status:
+                '${incomingDevice.deviceType.label} 在线 · ${incomingDevice.endpoint}',
+            time: existing.time,
+            initials: incomingDevice.initials,
+            messages: existing.messages,
+            files: existing.files,
+            unread: existing.unread,
+            device: incomingDevice,
+            ephemeral: existing.ephemeral,
+          );
+        }
       }
       _deviceConversations[fingerprint] =
           (_deviceConversations[fingerprint] ??
@@ -1165,6 +1208,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void _handleIncomingTransferRequest(IncomingTransferRequest request) {
     if (!mounted) return;
     setState(() {
+      final device = request.senderDevice;
+      if (device != null) {
+        _devices[device.fingerprint] = device;
+        _deviceConversations.putIfAbsent(
+          device.fingerprint,
+          () => _deviceConversation(device),
+        );
+      }
       if (request.autoAccepted) {
         _incomingTransferRequests.remove(request.sessionId);
       } else {
@@ -1297,9 +1348,20 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   Future<String> _autoSaveIncomingFile(NearSendAttachment attachment) async {
     final safeName = attachment.name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
 
-    // On Android, write into the public Downloads folder through MediaStore so
-    // the file is visible to file managers and survives without runtime perms.
+    // On Android, prefer the user-selected SAF directory. Without a custom
+    // directory, keep using public Downloads/NearSend via MediaStore.
     if (Platform.isAndroid) {
+      final selectedDirectory = _autoSaveDirectory.trim();
+      if (selectedDirectory.isNotEmpty &&
+          selectedDirectory != _defaultAutoSaveDirectory) {
+        final saved = await AndroidPlatform.saveToSelectedDirectory(
+          sourcePath: attachment.path,
+          fileName: safeName,
+          mimeType: _mimeForName(safeName),
+        );
+        if (saved != null) return saved;
+      }
+
       final saved = await AndroidPlatform.saveToDownloads(
         sourcePath: attachment.path,
         fileName: safeName,
@@ -1309,9 +1371,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       // Fall through to direct file IO if MediaStore failed.
     }
 
-    final directoryPath = _autoSaveDirectory.trim().isEmpty
-        ? _defaultAutoSaveDirectory
-        : _autoSaveDirectory.trim();
+    final directoryPath = Platform.isAndroid
+        ? (_androidFallbackAutoSaveDirectory ?? _defaultAutoSaveDirectory)
+        : (_autoSaveDirectory.trim().isEmpty
+              ? _defaultAutoSaveDirectory
+              : _autoSaveDirectory.trim());
     final directory = Directory(directoryPath);
     await directory.create(recursive: true);
 
@@ -2426,12 +2490,27 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   void _openNavDrawer() => _scaffoldKey.currentState?.openDrawer();
 
   Future<void> _chooseAutoSaveDirectory() async {
+    if (Platform.isAndroid) {
+      final directory = await AndroidPlatform.chooseSaveDirectory();
+      if (directory == null || !mounted) return;
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(_autoSaveDirectoryPreferenceKey, directory);
+      if (!mounted) return;
+      setState(() {
+        _autoSaveDirectory = directory;
+      });
+      return;
+    }
+
     final directory = await getDirectoryPath(
       initialDirectory: Directory(_autoSaveDirectory).existsSync()
           ? _autoSaveDirectory
           : null,
     );
     if (directory == null || !mounted) return;
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_autoSaveDirectoryPreferenceKey, directory);
+    if (!mounted) return;
     setState(() {
       _autoSaveDirectory = directory;
     });
@@ -2807,9 +2886,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     checkingFirewall: _checkingFirewall,
                     repairingFirewall: _repairingFirewall,
                     tempCleanupService: _tempCleanup,
-                    onAutoSaveChanged: (value) => setState(() {
-                      _autoSaveEnabled = value;
-                    }),
+                    onAutoSaveChanged: _setAutoSaveEnabled,
                     onOverwriteSameNameFilesChanged: _setOverwriteSameNameFiles,
                     onShowImageCopyButtonChanged: _setShowImageCopyButton,
                     onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
@@ -4147,10 +4224,9 @@ class SettingsPage extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 18),
-                        // Android saves into the public Downloads folder via
-                        // MediaStore; choosing an arbitrary folder needs SAF and
-                        // is out of scope, so only desktop shows a path picker.
-                        if (Platform.isAndroid)
+                        // Android uses SAF behind this picker; desktop uses
+                        // file_selector. Both persist the chosen display path.
+                        if (_showFixedAndroidDownloadsDirectoryPlaceholder)
                           Container(
                             height: 42,
                             alignment: Alignment.centerLeft,

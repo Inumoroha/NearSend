@@ -28,6 +28,37 @@ class AndroidPlatform {
     }
   }
 
+  /// Opens Android's system folder picker and persists access to the selected
+  /// tree. Returns a display name for settings UI, or null if cancelled.
+  static Future<String?> chooseSaveDirectory() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('chooseSaveDirectory');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Copies [sourcePath] into the directory previously selected with
+  /// [chooseSaveDirectory]. Returns a display path on success, or null when no
+  /// directory is selected / the copy fails.
+  static Future<String?> saveToSelectedDirectory({
+    required String sourcePath,
+    required String fileName,
+    required String mimeType,
+  }) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('saveToSelectedDirectory', {
+        'sourcePath': sourcePath,
+        'fileName': fileName,
+        'mimeType': mimeType,
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Holds a Wi-Fi MulticastLock so the OS stops dropping inbound multicast
   /// packets — required for LocalSend discovery to work on Android.
   static Future<void> acquireMulticastLock() async {
@@ -43,6 +74,26 @@ class AndroidPlatform {
     if (!Platform.isAndroid) return;
     try {
       await _channel.invokeMethod<void>('releaseMulticastLock');
+    } catch (_) {
+      // Best-effort cleanup.
+    }
+  }
+
+  /// Starts an Android foreground service that keeps the process eligible to
+  /// receive LAN traffic while the Flutter activity is in the background.
+  static Future<void> startBackgroundReceiveService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('startBackgroundReceiveService');
+    } catch (_) {
+      // Receiving still works while the activity remains foregrounded.
+    }
+  }
+
+  static Future<void> stopBackgroundReceiveService() async {
+    if (!Platform.isAndroid) return;
+    try {
+      await _channel.invokeMethod<void>('stopBackgroundReceiveService');
     } catch (_) {
       // Best-effort cleanup.
     }
