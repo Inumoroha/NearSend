@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:nearsend/main.dart';
 import 'package:nearsend/models/discovered_device.dart';
+import 'package:nearsend/models/nearsend_message.dart';
 
 void main() {
   setUp(() {
@@ -60,6 +61,72 @@ void main() {
 
     expect(find.text('你好，NearSend'), findsWidgets);
     expect(find.byIcon(Icons.done_all_rounded), findsWidgets);
+  });
+
+  testWidgets('restored chat opens at latest message', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final longHistory = Conversation(
+      title: 'Long history',
+      subtitle: 'latest restored message',
+      status: 'online',
+      time: 'now',
+      initials: 'L',
+      messages: [
+        for (var index = 0; index < 40; index++)
+          ChatMessage('restored message $index'),
+      ],
+      files: const [],
+    );
+    SharedPreferences.setMockInitialValues({
+      'device_conversations': jsonEncode({'long': longHistory.toJson()}),
+    });
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    expect(find.text('restored message 39'), findsOneWidget);
+    expect(find.text('restored message 0'), findsNothing);
+  });
+
+  testWidgets('chat history shows date and sparse time dividers', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final history = Conversation(
+      title: 'Timeline',
+      subtitle: 'timeline',
+      status: 'online',
+      time: 'now',
+      initials: 'T',
+      messages: [
+        ChatMessage('first', createdAt: DateTime(2026, 6, 18, 9)),
+        ChatMessage('nearby', createdAt: DateTime(2026, 6, 18, 9, 3)),
+        ChatMessage('later', createdAt: DateTime(2026, 6, 18, 9, 20)),
+        ChatMessage('next day', createdAt: DateTime(2026, 6, 19, 10, 5)),
+      ],
+      files: const [],
+    );
+    SharedPreferences.setMockInitialValues({
+      'device_conversations': jsonEncode({'timeline': history.toJson()}),
+    });
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pumpAndSettle();
+
+    expect(find.text('2026-06-18 09:00'), findsOneWidget);
+    expect(find.text('09:03'), findsNothing);
+    expect(find.text('09:20'), findsOneWidget);
+    expect(find.text('2026-06-19 10:05'), findsOneWidget);
   });
 
   testWidgets('can delete selected chat messages', (WidgetTester tester) async {
@@ -773,6 +840,28 @@ void main() {
 
     expect(find.byType(CopyAttachmentButton), findsNothing);
     expect(find.byIcon(Icons.copy_rounded), findsNothing);
+  });
+
+  test('auto-saved incoming image keeps preview metadata', () {
+    const incoming = NearSendAttachment(
+      path: 'C:\\temp\\nearsend_localsend\\clipboard-123.bmp',
+      name: 'clipboard-123.bmp',
+      size: 4096,
+      type: NearSendPayloadType.image,
+    );
+
+    final attachment = MessageAttachment.fromNearSend(
+      incoming,
+      savedPath: 'Download/NearSend/clipboard-123.bmp',
+    );
+    final restored = MessageAttachment.fromJson(attachment.toJson());
+
+    expect(restored.path, incoming.path);
+    expect(restored.savedPath, 'Download/NearSend/clipboard-123.bmp');
+    expect(restored.name, 'clipboard-123.bmp');
+    expect(restored.size, 4096);
+    expect(restored.isImage, isTrue);
+    expect(restored.sizeLabel, '4.0 KB');
   });
 
   testWidgets('image message can open and close preview overlay', (

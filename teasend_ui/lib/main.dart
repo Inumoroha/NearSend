@@ -500,6 +500,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         );
       });
     });
+    _jumpToBottom();
   }
 
   /// Persists the current device conversations. Called after every mutation
@@ -1336,7 +1337,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
 
     try {
       final savedPath = await _autoSaveIncomingFile(attachment);
-      return MessageAttachment.fromPath(savedPath);
+      return MessageAttachment.fromNearSend(attachment, savedPath: savedPath);
     } catch (_) {
       if (mounted) {
         _showToast('自动保存失败，文件暂时保留在临时目录');
@@ -1417,10 +1418,6 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     return candidate;
   }
 
-  String get _activeAutoSaveDirectory => _autoSaveDirectory.trim().isEmpty
-      ? _defaultAutoSaveDirectory
-      : _autoSaveDirectory.trim();
-
   Future<void> _loadReceiveHistory() async {
     final entries = await _historyStore.load();
     if (!mounted) return;
@@ -1435,9 +1432,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   ) async {
     var autoSaved = false;
     try {
+      final savedPath = attachment.savedPath;
       autoSaved =
-          _autoSaveEnabled &&
-          p.isWithin(_activeAutoSaveDirectory, attachment.path);
+          _autoSaveEnabled && savedPath != null && savedPath.trim().isNotEmpty;
     } catch (_) {
       autoSaved = false;
     }
@@ -1447,7 +1444,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       fileName: attachment.name,
       size: attachment.size,
       senderAlias: senderAlias.isEmpty ? '未知设备' : senderAlias,
-      path: attachment.path,
+      path: attachment.savedPath ?? attachment.path,
       autoSaved: autoSaved,
       receivedAt: DateTime.now(),
     );
@@ -2087,13 +2084,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   void _showToast(String message) {
+    toastification.dismissAll(delayForAnimation: false);
     toastification.show(
       context: context,
       title: Text(message),
       type: ToastificationType.info,
       style: ToastificationStyle.minimal,
       alignment: Alignment.topRight,
-      autoCloseDuration: const Duration(seconds: 3),
+      autoCloseDuration: const Duration(seconds: 2),
       animationDuration: const Duration(milliseconds: 220),
       showProgressBar: false,
       closeOnClick: true,
@@ -2783,6 +2781,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
+  void _jumpToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
@@ -2950,6 +2956,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                                 );
                           }
                         });
+                        _jumpToBottom();
                         unawaited(_saveConversations());
                       },
                     ),
@@ -6607,63 +6614,57 @@ class ChatPanel extends StatelessWidget {
                   child: _SoftAppear(
                     offset: const Offset(10, 0),
                     duration: const Duration(milliseconds: 260),
-                    child: ListView(
+                    child: _BottomAnchoredScroll(
                       controller: scrollController,
-                      padding: EdgeInsets.fromLTRB(
-                        24,
-                        24,
-                        24,
-                        24 + keyboardInset,
-                      ),
-                      children: [
-                        ...conversation.messages.map(
-                          (message) => MessageBubble(
-                            key: ValueKey('message-${message.id}'),
-                            message: message,
-                            selectionMode: selectionMode,
-                            selected: selectedMessageIds.contains(message.id),
-                            onToggleSelected: () =>
-                                onToggleMessageSelection(message.id),
-                            onRetrySend: () =>
-                                onRetrySendAttachment(message.id),
-                            onCancelTransfer: () =>
-                                onCancelTransfer(message.id),
-                            onCopyAttachment: onCopyAttachment,
-                            showImageCopyButton: showImageCopyButton,
-                            onPreviewImage: onPreviewImage,
-                          ),
+                      anchorKey:
+                          conversation.device?.fingerprint ??
+                          conversation.title,
+                      itemCount: conversation.messages.length,
+                      child: ListView(
+                        controller: scrollController,
+                        padding: EdgeInsets.fromLTRB(
+                          24,
+                          24,
+                          24,
+                          24 + keyboardInset,
                         ),
-                        if (conversation.files.isNotEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            '传输队列',
-                            style: TextStyle(
-                              color: _muted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
+                        children: [
+                          ..._buildMessageTimeline(
+                            conversation.messages,
+                            selectedMessageIds,
+                          ),
+                          if (conversation.files.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              '传输队列',
+                              style: TextStyle(
+                                color: _muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 10),
-                          Wrap(
-                            spacing: 12,
-                            runSpacing: 12,
-                            children: [
-                              for (
-                                var index = 0;
-                                index < conversation.files.length;
-                                index++
-                              )
-                                _SoftAppear(
-                                  delay: Duration(milliseconds: index * 35),
-                                  offset: const Offset(0, 8),
-                                  child: FileCard(
-                                    file: conversation.files[index],
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 12,
+                              children: [
+                                for (
+                                  var index = 0;
+                                  index < conversation.files.length;
+                                  index++
+                                )
+                                  _SoftAppear(
+                                    delay: Duration(milliseconds: index * 35),
+                                    offset: const Offset(0, 8),
+                                    child: FileCard(
+                                      file: conversation.files[index],
+                                    ),
                                   ),
-                                ),
-                            ],
-                          ),
+                              ],
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
@@ -6698,6 +6699,50 @@ class ChatPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Widget> _buildMessageTimeline(
+    List<ChatMessage> messages,
+    Set<String> selectedMessageIds,
+  ) {
+    final widgets = <Widget>[];
+    ChatMessage? previousMessage;
+    for (final message in messages) {
+      final label = _messageTimeLabel(previousMessage, message);
+      if (label != null) {
+        widgets.add(
+          MessageTimeDivider(key: ValueKey('time-${message.id}'), label: label),
+        );
+      }
+      widgets.add(
+        MessageBubble(
+          key: ValueKey('message-${message.id}'),
+          message: message,
+          selectionMode: selectionMode,
+          selected: selectedMessageIds.contains(message.id),
+          onToggleSelected: () => onToggleMessageSelection(message.id),
+          onRetrySend: () => onRetrySendAttachment(message.id),
+          onCancelTransfer: () => onCancelTransfer(message.id),
+          onCopyAttachment: onCopyAttachment,
+          showImageCopyButton: showImageCopyButton,
+          onPreviewImage: onPreviewImage,
+        ),
+      );
+      if (!message.system) previousMessage = message;
+    }
+    return widgets;
+  }
+
+  String? _messageTimeLabel(ChatMessage? previous, ChatMessage current) {
+    if (current.system) return null;
+    if (previous == null ||
+        !_isSameDay(previous.createdAt, current.createdAt)) {
+      return '${_formatMessageDate(current.createdAt)} ${_formatMessageClock(current.createdAt)}';
+    }
+    if (current.createdAt.difference(previous.createdAt).inMinutes >= 10) {
+      return _formatMessageClock(current.createdAt);
+    }
+    return null;
   }
 }
 
@@ -6933,6 +6978,96 @@ class _PageMenuButton extends StatelessWidget {
     );
   }
 }
+
+class _BottomAnchoredScroll extends StatefulWidget {
+  const _BottomAnchoredScroll({
+    required this.controller,
+    required this.itemCount,
+    required this.child,
+    this.anchorKey,
+  });
+
+  final ScrollController controller;
+  final Object? anchorKey;
+  final int itemCount;
+  final Widget child;
+
+  @override
+  State<_BottomAnchoredScroll> createState() => _BottomAnchoredScrollState();
+}
+
+class _BottomAnchoredScrollState extends State<_BottomAnchoredScroll> {
+  Object? _anchorKey;
+  late int _itemCount;
+
+  @override
+  void initState() {
+    super.initState();
+    _anchorKey = widget.anchorKey;
+    _itemCount = widget.itemCount;
+    _jumpAfterLayout();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BottomAnchoredScroll oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.anchorKey != _anchorKey || widget.itemCount != _itemCount) {
+      _anchorKey = widget.anchorKey;
+      _itemCount = widget.itemCount;
+      _jumpAfterLayout();
+    }
+  }
+
+  void _jumpAfterLayout() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.controller.hasClients) return;
+      widget.controller.jumpTo(widget.controller.position.maxScrollExtent);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
+class MessageTimeDivider extends StatelessWidget {
+  const MessageTimeDivider({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: _panel,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(label, style: TextStyle(color: _muted, fontSize: 12)),
+      ),
+    );
+  }
+}
+
+bool _isSameDay(DateTime a, DateTime b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+String _formatMessageDate(DateTime value) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(value.year, value.month, value.day);
+  if (day == today) return '今天';
+  if (day == today.subtract(const Duration(days: 1))) return '昨天';
+  return '${value.year}-${_twoDigits(value.month)}-${_twoDigits(value.day)}';
+}
+
+String _formatMessageClock(DateTime value) {
+  return '${_twoDigits(value.hour)}:${_twoDigits(value.minute)}';
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
 
 class DeviceDetailsPage extends StatelessWidget {
   const DeviceDetailsPage({
@@ -8582,9 +8717,11 @@ class ChatMessage {
     this.attachment,
     this.status = MessageSendStatus.none,
     this.progress,
+    DateTime? createdAt,
   }) : id =
            id ??
-           'msg-${DateTime.now().microsecondsSinceEpoch}-${_nextSequence++}';
+           'msg-${(createdAt ?? DateTime.now()).microsecondsSinceEpoch}-${_nextSequence++}',
+       createdAt = createdAt ?? DateTime.now();
 
   static int _nextSequence = 0;
 
@@ -8595,6 +8732,7 @@ class ChatMessage {
   final bool system;
   final MessageAttachment? attachment;
   final MessageSendStatus status;
+  final DateTime createdAt;
 
   /// Upload progress in 0.0–1.0 while [status] is sending; null when unknown.
   final double? progress;
@@ -8609,6 +8747,7 @@ class ChatMessage {
       attachment: attachment,
       status: status ?? this.status,
       progress: progress ?? this.progress,
+      createdAt: createdAt,
     );
   }
 
@@ -8622,6 +8761,7 @@ class ChatMessage {
       'attachment': attachment?.toJson(),
       'status': status.name,
       'progress': progress,
+      'createdAt': createdAt.toIso8601String(),
     };
   }
 
@@ -8649,7 +8789,20 @@ class ChatMessage {
       progress: status == MessageSendStatus.failed
           ? null
           : (json['progress'] as num?)?.toDouble(),
+      createdAt: _parseMessageCreatedAt(json),
     );
+  }
+
+  static DateTime _parseMessageCreatedAt(Map<String, dynamic> json) {
+    final stored = DateTime.tryParse(json['createdAt'] as String? ?? '');
+    if (stored != null) return stored;
+    final id = json['id'] as String? ?? '';
+    final match = RegExp(r'^msg-(\d+)').firstMatch(id);
+    final micros = match == null ? null : int.tryParse(match.group(1)!);
+    if (micros != null) {
+      return DateTime.fromMicrosecondsSinceEpoch(micros);
+    }
+    return DateTime.now();
   }
 }
 
@@ -8750,6 +8903,7 @@ class MessageAttachment {
     required this.name,
     required this.size,
     required this.kind,
+    this.savedPath,
   });
 
   factory MessageAttachment.fromPath(String path) {
@@ -8766,17 +8920,27 @@ class MessageAttachment {
     );
   }
 
-  factory MessageAttachment.fromNearSend(NearSendAttachment attachment) {
+  factory MessageAttachment.fromNearSend(
+    NearSendAttachment attachment, {
+    String? savedPath,
+  }) {
     return MessageAttachment(
       path: attachment.path,
       name: attachment.name,
       size: attachment.size,
       kind: attachment.isImage ? FileKind.image : FileKind.file,
+      savedPath: savedPath,
     );
   }
 
   Map<String, dynamic> toJson() {
-    return {'path': path, 'name': name, 'size': size, 'kind': kind.name};
+    return {
+      'path': path,
+      'name': name,
+      'size': size,
+      'kind': kind.name,
+      'savedPath': savedPath,
+    };
   }
 
   factory MessageAttachment.fromJson(Map<String, dynamic> json) {
@@ -8785,6 +8949,7 @@ class MessageAttachment {
       name: json['name'] as String? ?? '',
       size: json['size'] is int ? json['size'] as int : 0,
       kind: FileKind.fromName(json['kind']),
+      savedPath: json['savedPath'] as String?,
     );
   }
 
@@ -8792,6 +8957,7 @@ class MessageAttachment {
   final String name;
   final int size;
   final FileKind kind;
+  final String? savedPath;
 
   bool get isImage => kind == FileKind.image;
 
