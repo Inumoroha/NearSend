@@ -57,12 +57,13 @@ class LanDiscoveryService {
     final interfaces = await _networkInterfaces();
     final candidates = [
       for (final interface in interfaces)
-        for (final address in interface.addresses.where(_isLanAddress))
+        for (final address in interface.addresses.where(_isUsableLocalAddress))
           _LocalAddressCandidate(interface, address),
     ]..sort(_compareLocalAddressCandidates);
 
+    final visibleCandidates = _preferredVisibleAddressCandidates(candidates);
     return [
-      for (final candidate in candidates)
+      for (final candidate in visibleCandidates)
         '${candidate.address.address}:$boundPort',
     ];
   }
@@ -184,7 +185,8 @@ class LanDiscoveryService {
     final interfaces = await _networkInterfaces();
     final addresses = <InternetAddress>[
       for (final interface in interfaces)
-        for (final address in interface.addresses.where(_isLanAddress)) address,
+        for (final address in interface.addresses.where(_isUsableLocalAddress))
+          address,
     ];
     if (addresses.isEmpty) {
       addresses.add(InternetAddress.anyIPv4);
@@ -241,7 +243,7 @@ class LanDiscoveryService {
     );
 
     return interfaces
-        .where((interface) => interface.addresses.any(_isLanAddress))
+        .where((interface) => interface.addresses.any(_isUsableLocalAddress))
         .toList(growable: false);
   }
 
@@ -287,7 +289,7 @@ class LanDiscoveryService {
   }
 
   bool _isProbeableLanAddress(InternetAddress address) {
-    if (!_isLanAddress(address)) return false;
+    if (!_isPrivateLanAddress(address)) return false;
     final parts = address.address.split('.');
     if (parts.length != 4) return false;
     return !(parts[0] == '169' && parts[1] == '254');
@@ -371,18 +373,54 @@ class LanDiscoveryService {
     }
   }
 
-  bool _isLanAddress(InternetAddress address) {
+  bool _isUsableLocalAddress(InternetAddress address) {
     if (address.isLoopback) return false;
-    final parts = address.address.split('.');
-    if (parts.length != 4) return false;
-    final first = int.tryParse(parts[0]);
-    final second = int.tryParse(parts[1]);
-    if (first == null || second == null) return false;
+    final parts = _ipv4Parts(address);
+    if (parts == null) return false;
+
+    final first = parts[0];
+    final second = parts[1];
+    if (first == 0 ||
+        first == 127 ||
+        first >= 224 ||
+        (first == 169 && second == 254)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool _isPrivateLanAddress(InternetAddress address) {
+    final parts = _ipv4Parts(address);
+    if (parts == null) return false;
+    final first = parts[0];
+    final second = parts[1];
 
     return first == 10 ||
         (first == 172 && second >= 16 && second <= 31) ||
         (first == 192 && second == 168) ||
         (first == 169 && second == 254);
+  }
+
+  List<int>? _ipv4Parts(InternetAddress address) {
+    final parts = address.address.split('.');
+    if (parts.length != 4) return null;
+    final parsed = <int>[];
+    for (final part in parts) {
+      final value = int.tryParse(part);
+      if (value == null || value < 0 || value > 255) return null;
+      parsed.add(value);
+    }
+    return parsed;
+  }
+
+  List<_LocalAddressCandidate> _preferredVisibleAddressCandidates(
+    List<_LocalAddressCandidate> candidates,
+  ) {
+    final physical = candidates
+        .where((candidate) => !_looksVirtualInterface(candidate.interface.name))
+        .toList(growable: false);
+    return physical.isNotEmpty ? physical : candidates;
   }
 
   int _compareLocalAddressCandidates(
@@ -428,18 +466,19 @@ class LanDiscoveryService {
   }
 
   bool _looksVirtualInterface(String name) {
-    return name.contains('virtual') ||
-        name.contains('vmware') ||
-        name.contains('virtualbox') ||
-        name.contains('hyper-v') ||
-        name.contains('hyperv') ||
-        name.contains('wsl') ||
-        name.contains('docker') ||
-        name.contains('vethernet') ||
-        name.contains('vpn') ||
-        name.contains('tap') ||
-        name.contains('tun') ||
-        name.contains('loopback');
+    final lowerName = name.toLowerCase();
+    return lowerName.contains('virtual') ||
+        lowerName.contains('vmware') ||
+        lowerName.contains('virtualbox') ||
+        lowerName.contains('hyper-v') ||
+        lowerName.contains('hyperv') ||
+        lowerName.contains('wsl') ||
+        lowerName.contains('docker') ||
+        lowerName.contains('vethernet') ||
+        lowerName.contains('vpn') ||
+        lowerName.contains('tap') ||
+        lowerName.contains('tun') ||
+        lowerName.contains('loopback');
   }
 
   void _handleDatagram(Datagram? datagram) {
