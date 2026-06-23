@@ -4670,7 +4670,7 @@ class FirewallRepairCard extends StatelessWidget {
               const SizedBox(height: 12),
               SelectableText(
                 diagnosticText,
-                maxLines: 5,
+                maxLines: 8,
                 style: TextStyle(
                   color: _muted,
                   fontSize: 12,
@@ -4704,10 +4704,84 @@ class FirewallRepairCard extends StatelessWidget {
         status.needsRepair &&
         details != null &&
         details.isNotEmpty) {
-      parts.add('detect: $details');
+      final formatted = _formatFirewallDetails(details);
+      if (formatted != null) {
+        parts.add(formatted);
+      }
     }
     if (parts.isEmpty) return null;
     return parts.join('\n');
+  }
+
+  /// 把后台返回的防火墙检测 JSON（含大段 netsh 原始输出）整理成简洁可读的摘要。
+  /// 解析失败时返回 null，避免把原始 JSON 直接展示给用户。
+  String? _formatFirewallDetails(String details) {
+    Map<String, dynamic> decoded;
+    try {
+      final value = jsonDecode(details);
+      if (value is! Map<String, dynamic>) return null;
+      decoded = value;
+    } catch (_) {
+      return null;
+    }
+
+    final lines = <String>['检测详情'];
+    lines.add('  TCP 规则：${_formatRuleList(decoded['tcpRules'])}');
+    lines.add('  UDP 规则：${_formatRuleList(decoded['udpRules'])}');
+    lines.add('  程序规则：${_formatRuleList(decoded['programRules'])}');
+    return lines.join('\n');
+  }
+
+  String _formatRuleList(Object? rules) {
+    if (rules is! List || rules.isEmpty) {
+      return '未找到';
+    }
+    final summaries = rules
+        .whereType<Map<String, dynamic>>()
+        .map(_formatRule)
+        .where((s) => s.isNotEmpty)
+        .toList();
+    if (summaries.isEmpty) {
+      return '${rules.length} 条';
+    }
+    return '${rules.length} 条 · ${summaries.join('；')}';
+  }
+
+  String _formatRule(Map<String, dynamic> rule) {
+    final fields = <String>[];
+    final enabled = rule['enabled']?.toString();
+    if (enabled != null && enabled.isNotEmpty) {
+      fields.add(enabled.toLowerCase() == 'true' ? '已启用' : '已禁用');
+    }
+    final action = rule['action']?.toString();
+    if (action != null && action.isNotEmpty) {
+      fields.add(action.toLowerCase() == 'allow' ? '允许' : '阻止');
+    }
+    final protocol = _normalizeProtocol(rule['protocol']?.toString());
+    if (protocol != null) {
+      fields.add(protocol);
+    }
+    final localPort = rule['localPort']?.toString();
+    if (localPort != null && localPort.isNotEmpty && localPort != 'Any') {
+      fields.add(localPort);
+    }
+    final program = rule['program']?.toString();
+    if (program != null && program.isNotEmpty && program != 'Any') {
+      fields.add(program.split(RegExp(r'[\\/]')).last);
+    }
+    return fields.join(' / ');
+  }
+
+  String? _normalizeProtocol(String? protocol) {
+    if (protocol == null || protocol.isEmpty) return null;
+    switch (protocol) {
+      case '6':
+        return 'TCP';
+      case '17':
+        return 'UDP';
+      default:
+        return protocol;
+    }
   }
 }
 
