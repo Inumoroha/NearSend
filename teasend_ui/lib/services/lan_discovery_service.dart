@@ -44,6 +44,8 @@ class LanDiscoveryService {
   Stream<String> get diagnostics => _server.diagnostics;
   Stream<IncomingTransferRequest> get incomingRequests =>
       _server.incomingRequests;
+  Stream<IncomingTransferProgress> get incomingProgress =>
+      _server.incomingProgress;
   int get boundPort => _server.boundPort;
   bool get isRunning => _server.isRunning;
 
@@ -52,6 +54,9 @@ class LanDiscoveryService {
 
   bool declineIncomingTransfer(String sessionId) =>
       _server.declineIncomingTransfer(sessionId);
+
+  bool cancelIncomingTransfer(String sessionId) =>
+      _server.cancelIncomingTransfer(sessionId);
 
   Future<List<String>> localConnectEndpoints() async {
     final interfaces = await _networkInterfaces();

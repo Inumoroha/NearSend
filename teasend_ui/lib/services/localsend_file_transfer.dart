@@ -59,6 +59,8 @@ class LocalSendFileTransferService {
   final _incomingController = StreamController<NearSendMessage>.broadcast();
   final _requestController =
       StreamController<IncomingTransferRequest>.broadcast();
+  final _progressController =
+      StreamController<IncomingTransferProgress>.broadcast();
   final _sessions = <String, _ReceiveSession>{};
   final _random = Random.secure();
 
@@ -66,9 +68,15 @@ class LocalSendFileTransferService {
   Stream<IncomingTransferRequest> get incomingRequests =>
       _requestController.stream;
 
+  /// Byte-level progress for in-flight incoming uploads, emitted (throttled)
+  /// while [handleUpload] streams a file to disk.
+  Stream<IncomingTransferProgress> get incomingProgress =>
+      _progressController.stream;
+
   Future<void> dispose() async {
     await _incomingController.close();
     await _requestController.close();
+    await _progressController.close();
   }
 
   Future<Map<String, Object?>> handlePrepareUpload(HttpRequest request) async {
@@ -189,6 +197,10 @@ class LocalSendFileTransferService {
     final file = File('${directory.path}${Platform.pathSeparator}$safeName');
     final sink = file.openWrite();
     var received = 0;
+    // Throttle progress events so a fast transfer does not flood the UI with
+    // a setState per network chunk.
+    var lastEmit = DateTime.now();
+    var lastEmittedBytes = 0;
     try {
       await for (final chunk in request) {
         if (session.cancelled) {
@@ -197,6 +209,14 @@ class LocalSendFileTransferService {
         received += chunk.length;
         incoming.received = received;
         sink.add(chunk);
+
+        final now = DateTime.now();
+        if (now.difference(lastEmit) >= const Duration(milliseconds: 120) ||
+            received - lastEmittedBytes >= 256 * 1024) {
+          lastEmit = now;
+          lastEmittedBytes = received;
+          _emitProgress(session, incoming, received);
+        }
       }
     } finally {
       await sink.close();
@@ -204,6 +224,9 @@ class LocalSendFileTransferService {
     if (session.cancelled) {
       throw const TransferCancelledException();
     }
+    // Final 100% tick so the bar always lands on complete before the file
+    // message is emitted.
+    _emitProgress(session, incoming, received);
 
     _incomingController.add(
       NearSendMessage(
@@ -227,6 +250,23 @@ class LocalSendFileTransferService {
     if (session.files.values.every((file) => file.completed)) {
       _sessions.remove(sessionId);
     }
+  }
+
+  void _emitProgress(
+    _ReceiveSession session,
+    _IncomingFile incoming,
+    int received,
+  ) {
+    if (_progressController.isClosed) return;
+    _progressController.add(
+      IncomingTransferProgress(
+        sessionId: session.sessionId,
+        fileId: incoming.id,
+        fileName: incoming.name,
+        received: received,
+        total: incoming.size,
+      ),
+    );
   }
 
   bool acceptIncoming(String sessionId) {
@@ -589,6 +629,23 @@ class IncomingTransferFile {
   final String id;
   final String name;
   final int size;
+}
+
+/// A byte-level progress tick for an incoming file being written to disk.
+class IncomingTransferProgress {
+  const IncomingTransferProgress({
+    required this.sessionId,
+    required this.fileId,
+    required this.fileName,
+    required this.received,
+    required this.total,
+  });
+
+  final String sessionId;
+  final String fileId;
+  final String fileName;
+  final int received;
+  final int total;
 }
 
 class _ReceiveSession {

@@ -60,6 +60,8 @@ class LocalSendDiscoveryServer {
   Stream<String> get diagnostics => _diagnosticController.stream;
   Stream<IncomingTransferRequest> get incomingRequests =>
       _fileTransfer.incomingRequests;
+  Stream<IncomingTransferProgress> get incomingProgress =>
+      _fileTransfer.incomingProgress;
 
   int get boundPort => _server?.port ?? identity.port;
   bool get isRunning => _server != null;
@@ -68,6 +70,8 @@ class LocalSendDiscoveryServer {
       _fileTransfer.acceptIncoming(sessionId);
   bool declineIncomingTransfer(String sessionId) =>
       _fileTransfer.declineIncoming(sessionId);
+  bool cancelIncomingTransfer(String sessionId) =>
+      _fileTransfer.cancelIncoming(sessionId);
 
   Future<void> start() async {
     if (_server != null) return;

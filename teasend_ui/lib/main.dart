@@ -372,6 +372,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   StreamSubscription<NearSendMessage>? _messageSubscription;
   StreamSubscription<String>? _diagnosticSubscription;
   StreamSubscription<IncomingTransferRequest>? _incomingTransferSubscription;
+  StreamSubscription<IncomingTransferProgress>? _incomingProgressSubscription;
+  // Per-transfer-task smoothed byte-rate samplers, keyed by task id. Removed
+  // when the task reaches a terminal state.
+  final Map<String, _TransferRateTracker> _rateTrackers = {};
   bool _isScanning = false;
   bool _messageSelectionMode = false;
   bool _showDeviceDetails = false;
@@ -479,6 +483,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _incomingTransferSubscription = _discoveryService.incomingRequests.listen(
         _handleIncomingTransferRequest,
       );
+      _incomingProgressSubscription = _discoveryService.incomingProgress.listen(
+        _handleIncomingProgress,
+      );
       unawaited(_startDiscovery());
       unawaited(_refreshReceiveDiagnostics());
       _startPresenceRefreshTimer();
@@ -547,6 +554,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     unawaited(_messageSubscription?.cancel());
     unawaited(_diagnosticSubscription?.cancel());
     unawaited(_incomingTransferSubscription?.cancel());
+    unawaited(_incomingProgressSubscription?.cancel());
     unawaited(_localSendTransfer.dispose());
     unawaited(_discoveryService.dispose());
     _tempCleanup?.dispose();
@@ -1317,6 +1325,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final progress = complete
         ? 1.0
         : (nextReceived / fileCount).clamp(0.0, 1.0);
+    if (complete) _rateTrackers.remove(sessionId);
     _incomingTransferRequests.remove(sessionId);
     _upsertTransferTask(
       task.copyWith(
@@ -2100,12 +2109,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         handle: handle,
         onProgress: (sent, total) {
           final progress = total == 0 ? 0.0 : sent / total;
+          final rate = _rateTrackers
+              .putIfAbsent(message.id, _TransferRateTracker.new)
+              .update(sent);
           _updateMessageProgress(message.id, progress);
           _updateTransferTask(
             message.id,
             progress: progress,
             status: TransferTaskStatus.transferring,
-            subtitle: '${formatBytes(sent)} / ${formatBytes(total)}',
+            subtitle: _progressSubtitle(sent, total, rate),
           );
         },
       );
@@ -2265,6 +2277,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     int? receivedFiles,
   }) {
     if (!mounted) return;
+    if (status != null && status != TransferTaskStatus.transferring) {
+      // Transfer reached a terminal state — drop its rate sampler.
+      _rateTrackers.remove(id);
+    }
     setState(() {
       final index = _transferTasks.indexWhere((item) => item.id == id);
       if (index == -1) return;
@@ -2277,15 +2293,120 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     });
   }
 
-  void _cancelTransfer(String messageId) {
+  /// Updates an incoming task's bar with live byte progress as the file is
+  /// written to disk. For multi-file sessions the bar blends completed files
+  /// (tracked by [_markIncomingFileReceived]) with the current file's fraction.
+  void _handleIncomingProgress(IncomingTransferProgress progress) {
+    if (!mounted) return;
+    final index = _transferTasks.indexWhere(
+      (item) => item.id == progress.sessionId,
+    );
+    if (index == -1) return;
+    final task = _transferTasks[index];
+    if (task.status != TransferTaskStatus.transferring &&
+        task.status != TransferTaskStatus.waiting) {
+      return;
+    }
+
+    final tracker = _rateTrackers.putIfAbsent(
+      progress.sessionId,
+      _TransferRateTracker.new,
+    );
+    final rate = tracker.update(progress.received);
+
+    final fileCount = task.fileCount <= 0 ? 1 : task.fileCount;
+    final completedFraction = task.receivedFiles / fileCount;
+    final currentFraction = progress.total <= 0
+        ? 0.0
+        : (progress.received / progress.total) / fileCount;
+    final ratio = (completedFraction + currentFraction).clamp(0.0, 1.0);
+
+    _updateTransferTask(
+      progress.sessionId,
+      progress: ratio,
+      status: TransferTaskStatus.transferring,
+      subtitle: _progressSubtitle(progress.received, progress.total, rate),
+    );
+  }
+
+  /// Builds a transfer subtitle like "5.0 / 20.0 MB · 3.2 MB/s · 剩余 5 秒".
+  /// Speed and ETA are omitted until a meaningful rate is sampled.
+  String _progressSubtitle(int sent, int total, double bytesPerSecond) {
+    final base = '${formatBytes(sent)} / ${formatBytes(total)}';
+    if (bytesPerSecond < 1) return base;
+    final speed = '${formatBytes(bytesPerSecond.round())}/s';
+    final remaining = total - sent;
+    if (remaining <= 0) return '$base · $speed';
+    final etaSeconds = (remaining / bytesPerSecond).ceil();
+    return '$base · $speed · 剩余 ${_formatEta(etaSeconds)}';
+  }
+
+  String _formatEta(int seconds) {
+    if (seconds < 60) return '$seconds 秒';
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    if (minutes < 60) return secs == 0 ? '$minutes 分' : '$minutes 分 $secs 秒';
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    return mins == 0 ? '$hours 时' : '$hours 时 $mins 分';
+  }
+
+  Future<void> _cancelTransfer(String messageId) async {
     final handle = _transferHandles[messageId];
-    if (handle == null) return;
-    handle.cancel();
-    unawaited(_localSendTransfer.cancelRemote(handle));
+    if (handle != null) {
+      // Outgoing transfer: abort the upload and notify the receiver.
+      handle.cancel();
+      unawaited(_localSendTransfer.cancelRemote(handle));
+      _updateTransferTask(
+        messageId,
+        status: TransferTaskStatus.cancelled,
+        subtitle: '正在取消',
+      );
+      return;
+    }
+
+    // Incoming transfer: confirm before discarding the partial download.
+    final index = _transferTasks.indexWhere((item) => item.id == messageId);
+    if (index == -1) return;
+    final task = _transferTasks[index];
+    if (task.direction != TransferTaskDirection.incoming ||
+        task.status != TransferTaskStatus.transferring) {
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return TeaDialog(
+          title: const Text('中断接收'),
+          icon: Icons.cancel_outlined,
+          width: 380,
+          content: Text(
+            '中断接收「${task.fileName}」？已下载的部分将被丢弃。',
+            style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TeaDialogButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              label: '继续接收',
+            ),
+            TeaDialogButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              label: '中断',
+              filled: true,
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    _discoveryService.cancelIncomingTransfer(messageId);
+    _incomingTransferRequests.remove(messageId);
     _updateTransferTask(
       messageId,
       status: TransferTaskStatus.cancelled,
-      subtitle: '正在取消',
+      subtitle: '已取消',
     );
   }
 
@@ -2756,12 +2877,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         handle: handle,
         onProgress: (sent, total) {
           final progress = total == 0 ? 0.0 : sent / total;
+          final rate = _rateTrackers
+              .putIfAbsent(message.id, _TransferRateTracker.new)
+              .update(sent);
           _updateMessageProgress(message.id, progress);
           _updateTransferTask(
             message.id,
             progress: progress,
             status: TransferTaskStatus.transferring,
-            subtitle: '${formatBytes(sent)} / ${formatBytes(total)}',
+            subtitle: _progressSubtitle(sent, total, rate),
           );
         },
       );
@@ -5438,9 +5562,9 @@ class TransferTaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isWaiting = task.status == TransferTaskStatus.waiting;
-    final canCancel =
-        task.direction == TransferTaskDirection.outgoing &&
-        task.status == TransferTaskStatus.transferring;
+    // Both directions can be cancelled mid-flight: outgoing aborts the upload,
+    // incoming discards the partial download (with a confirm dialog).
+    final canCancel = task.status == TransferTaskStatus.transferring;
     final progress = task.progress;
 
     return ShadCard(
@@ -9134,6 +9258,33 @@ class ChatMessage {
 }
 
 enum MessageSendStatus { none, sending, sent, failed, cancelled }
+
+/// Smooths a transfer's instantaneous byte rate into a stable bytes/sec value.
+///
+/// Fed cumulative byte counts via [update]; uses an exponential moving average
+/// so the displayed speed does not jitter with per-chunk timing noise.
+class _TransferRateTracker {
+  int? _lastBytes;
+  DateTime? _lastTime;
+  double _rate = 0;
+
+  double update(int bytes) {
+    final now = DateTime.now();
+    final lastBytes = _lastBytes;
+    final lastTime = _lastTime;
+    _lastBytes = bytes;
+    _lastTime = now;
+    if (lastBytes == null || lastTime == null) return _rate;
+
+    final deltaBytes = bytes - lastBytes;
+    final deltaSeconds = now.difference(lastTime).inMicroseconds / 1000000.0;
+    if (deltaSeconds <= 0 || deltaBytes < 0) return _rate;
+
+    final instant = deltaBytes / deltaSeconds;
+    _rate = _rate == 0 ? instant : _rate * 0.7 + instant * 0.3;
+    return _rate;
+  }
+}
 
 enum TransferTaskDirection { incoming, outgoing }
 
