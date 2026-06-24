@@ -26,9 +26,10 @@ import 'services/manual_device_connector.dart';
 import 'services/native_window_service.dart';
 import 'services/nearsend_message_client.dart';
 import 'services/receive_history_store.dart';
-import 'services/temp_file_cleanup.dart';
+import 'services/temp_file_cleanup.dart' hide formatBytes;
 import 'services/windows_clipboard_files.dart';
 import 'services/windows_firewall_service.dart';
+import 'ui/theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,18 +40,6 @@ Future<void> main() async {
   runApp(const NearSendApp());
 }
 
-Color _sidebar = const Color(0xFFFFFFFF);
-Color _sidebarMuted = const Color(0xFF64748B);
-Color _panel = const Color(0xFFF4F6FA);
-Color _surface = const Color(0xFFFFFFFF);
-Color _line = const Color(0xFFE2E8F0);
-Color _text = const Color(0xFF0F172A);
-Color _muted = const Color(0xFF64748B);
-Color _accent = const Color(0xFF2563EB);
-Color _accentSoft = const Color(0xFFEFF6FF);
-const _warning = Color(0xFFCB9A4B);
-Color _bubbleMe = const Color(0xFFDBEAFE);
-Color _chatBg = const Color(0xFFF8FAFC);
 const _minimizeToTrayPreferenceKey = 'minimize_to_tray';
 const _autoSaveEnabledPreferenceKey = 'auto_save_enabled';
 const _autoSaveDirectoryPreferenceKey = 'auto_save_directory';
@@ -64,110 +53,6 @@ const _deviceOfflineAfter = Duration(seconds: 120);
 const _devicePresenceRefreshInterval = Duration(seconds: 5);
 
 bool get _showFixedAndroidDownloadsDirectoryPlaceholder => false;
-
-enum AppThemeMode { light, dark }
-
-const _themeColorOptions = [
-  Color(0xFF2563EB),
-  Color(0xFF3D8F73),
-  Color(0xFF0F172A),
-  Color(0xFF8B6FD1),
-  Color(0xFFD08B38),
-  Color(0xFFE0527A),
-];
-
-class _ThemePalette {
-  const _ThemePalette({
-    required this.sidebar,
-    required this.sidebarMuted,
-    required this.panel,
-    required this.surface,
-    required this.line,
-    required this.text,
-    required this.muted,
-    required this.accent,
-    required this.accentSoft,
-    required this.bubbleMe,
-    required this.chatBg,
-  });
-
-  final Color sidebar;
-  final Color sidebarMuted;
-  final Color panel;
-  final Color surface;
-  final Color line;
-  final Color text;
-  final Color muted;
-  final Color accent;
-  final Color accentSoft;
-  final Color bubbleMe;
-  final Color chatBg;
-}
-
-_ThemePalette _buildPalette(AppThemeMode mode, Color accent) {
-  if (mode == AppThemeMode.dark) {
-    return _ThemePalette(
-      sidebar: const Color(0xFF020617),
-      sidebarMuted: const Color(0xFF94A3B8),
-      panel: const Color(0xFF0F172A),
-      surface: const Color(0xFF111827),
-      line: const Color(0xFF1E293B),
-      text: const Color(0xFFF8FAFC),
-      muted: const Color(0xFFCBD5E1),
-      accent: accent,
-      accentSoft: Color.alphaBlend(
-        accent.withValues(alpha: 0.18),
-        const Color(0xFF111827),
-      ),
-      bubbleMe: Color.alphaBlend(
-        accent.withValues(alpha: 0.20),
-        const Color(0xFF111827),
-      ),
-      chatBg: const Color(0xFF020617),
-    );
-  }
-
-  return _ThemePalette(
-    sidebar: const Color(0xFFFFFFFF),
-    sidebarMuted: const Color(0xFF64748B),
-    panel: const Color(0xFFF4F6FA),
-    surface: const Color(0xFFFFFFFF),
-    line: const Color(0xFFE2E8F0),
-    text: const Color(0xFF0F172A),
-    muted: const Color(0xFF64748B),
-    accent: accent,
-    accentSoft: Color.alphaBlend(accent.withValues(alpha: 0.10), Colors.white),
-    bubbleMe: Color.alphaBlend(accent.withValues(alpha: 0.18), Colors.white),
-    chatBg: const Color(0xFFF8FAFC),
-  );
-}
-
-void _applyPalette(_ThemePalette palette) {
-  _sidebar = palette.sidebar;
-  _sidebarMuted = palette.sidebarMuted;
-  _panel = palette.panel;
-  _surface = palette.surface;
-  _line = palette.line;
-  _text = palette.text;
-  _muted = palette.muted;
-  _accent = palette.accent;
-  _accentSoft = palette.accentSoft;
-  _bubbleMe = palette.bubbleMe;
-  _chatBg = palette.chatBg;
-}
-
-String formatBytes(int size) {
-  if (size <= 0) return '未知大小';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  var value = size.toDouble();
-  var index = 0;
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024;
-    index++;
-  }
-  final digits = index == 0 || value >= 10 ? 0 : 1;
-  return '${value.toStringAsFixed(digits)} ${units[index]}';
-}
 
 class _SoftAppear extends StatelessWidget {
   const _SoftAppear({
@@ -256,9 +141,9 @@ class NearSendApp extends StatelessWidget {
         theme: ShadThemeData(
           brightness: Brightness.light,
           colorScheme: const ShadZincColorScheme.light().copyWith(
-            primary: _accent,
-            ring: _accent,
-            selection: _accent.withValues(alpha: 0.20),
+            primary: appColors.accent,
+            ring: appColors.accent,
+            selection: appColors.accent.withValues(alpha: 0.20),
           ),
           textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
@@ -266,9 +151,9 @@ class NearSendApp extends StatelessWidget {
         darkTheme: ShadThemeData(
           brightness: Brightness.dark,
           colorScheme: const ShadZincColorScheme.dark().copyWith(
-            primary: _accent,
-            ring: _accent,
-            selection: _accent.withValues(alpha: 0.28),
+            primary: appColors.accent,
+            ring: appColors.accent,
+            selection: appColors.accent.withValues(alpha: 0.28),
           ),
           textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
@@ -280,7 +165,7 @@ class NearSendApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             theme: ThemeData(
               colorScheme: ColorScheme.fromSeed(
-                seedColor: _accent,
+                seedColor: appColors.accent,
                 brightness: Brightness.light,
               ),
               fontFamily: 'HarmonyOS Sans SC',
@@ -294,14 +179,14 @@ class NearSendApp extends StatelessWidget {
                 ),
               ),
               popupMenuTheme: PopupMenuThemeData(
-                color: _surface,
+                color: appColors.surface,
                 surfaceTintColor: Colors.transparent,
                 elevation: 10,
                 shape: RoundedRectangleBorder(
-                  side: BorderSide(color: _line),
+                  side: BorderSide(color: appColors.line),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                textStyle: TextStyle(color: _text, fontSize: 13),
+                textStyle: TextStyle(color: appColors.text, fontSize: 13),
               ),
               useMaterial3: true,
             ),
@@ -394,7 +279,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   List<String> _localEndpointLines = const [];
   String? _localHttpStatus;
   AppThemeMode _themeMode = AppThemeMode.light;
-  Color _themeColor = _themeColorOptions.first;
+  Color _themeColor = themeColorOptions.first;
   MessageAttachment? _previewImage;
   String _scanStatus = '正在监听局域网设备';
   late String _autoSaveDirectory;
@@ -443,7 +328,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       windowManager.addListener(this);
       trayManager.addListener(this);
     }
-    _applyPalette(_buildPalette(_themeMode, _themeColor));
+    applyPalette(_themeMode, _themeColor);
     unawaited(_initAndroidFallbackDirectory());
     unawaited(_restoreWindowSettings());
     unawaited(_refreshFirewallStatus());
@@ -607,7 +492,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         : AppThemeMode.light;
     final savedThemeColor = preferences.getInt(_themeColorPreferenceKey);
     final themeColor = savedThemeColor == null
-        ? _themeColorOptions.first
+        ? themeColorOptions.first
         : Color(savedThemeColor);
     final autoSendFingerprints =
         preferences.getStringList(_clipboardAutoSendPreferenceKey) ??
@@ -617,7 +502,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         const <String>[];
     final showImageCopyButton =
         preferences.getBool(_showImageCopyButtonPreferenceKey) ?? true;
-    _applyPalette(_buildPalette(themeMode, themeColor));
+    applyPalette(themeMode, themeColor);
 
     if (enabled && Platform.isWindows) {
       await _nativeWindow.setMinimizeToTrayEnabled(true);
@@ -681,7 +566,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     await preferences.setString(_themeModePreferenceKey, mode.name);
     setState(() {
       _themeMode = mode;
-      _applyPalette(_buildPalette(_themeMode, _themeColor));
+      applyPalette(_themeMode, _themeColor);
     });
   }
 
@@ -690,7 +575,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     await preferences.setInt(_themeColorPreferenceKey, color.toARGB32());
     setState(() {
       _themeColor = color;
-      _applyPalette(_buildPalette(_themeMode, _themeColor));
+      applyPalette(_themeMode, _themeColor);
     });
   }
 
@@ -1575,7 +1460,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
           width: 380,
           content: Text(
             '移除 $count 条文件已不存在的记录（不影响磁盘上的文件）。',
-            style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+            style: TextStyle(color: appColors.text, fontSize: 14, height: 1.5),
           ),
           actions: [
             TeaDialogButton(
@@ -1631,7 +1516,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 children: [
                   Text(
                     message,
-                    style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+                    style: TextStyle(color: appColors.text, fontSize: 14, height: 1.5),
                   ),
                   const SizedBox(height: 12),
                   InkWell(
@@ -1648,12 +1533,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                               () => alsoDeleteFile = value ?? false,
                             ),
                             visualDensity: VisualDensity.compact,
-                            activeColor: _accent,
+                            activeColor: appColors.accent,
                           ),
                           const SizedBox(width: 2),
                           Text(
                             '同时删除磁盘上的文件',
-                            style: TextStyle(color: _text, fontSize: 13),
+                            style: TextStyle(color: appColors.text, fontSize: 13),
                           ),
                         ],
                       ),
@@ -1947,7 +1832,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
               DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  border: Border.all(color: _line),
+                  border: Border.all(color: appColors.line),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Padding(
@@ -1960,7 +1845,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 endpoint,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: _text,
+                  color: appColors.text,
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1969,7 +1854,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
               Text(
                 '其他 NearSend 客户端扫描后可连接本机',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _muted, fontSize: 12),
+                style: TextStyle(color: appColors.muted, fontSize: 12),
               ),
             ],
           ),
@@ -2181,13 +2066,13 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       closeOnClick: true,
       pauseOnHover: true,
       dragToClose: true,
-      primaryColor: _accent,
-      backgroundColor: _surface,
-      foregroundColor: _text,
+      primaryColor: appColors.accent,
+      backgroundColor: appColors.surface,
+      foregroundColor: appColors.text,
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       margin: const EdgeInsets.fromLTRB(0, 12, 18, 0),
       borderRadius: BorderRadius.circular(8),
-      borderSide: BorderSide(color: _line),
+      borderSide: BorderSide(color: appColors.line),
       boxShadow: const [
         BoxShadow(
           color: Color(0x1F31302D),
@@ -2383,7 +2268,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
           width: 380,
           content: Text(
             '中断接收「${task.fileName}」？已下载的部分将被丢弃。',
-            style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+            style: TextStyle(color: appColors.text, fontSize: 14, height: 1.5),
           ),
           actions: [
             TeaDialogButton(
@@ -3010,7 +2895,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     return Scaffold(
       key: _scaffoldKey,
       resizeToAvoidBottomInset: false,
-      backgroundColor: _panel,
+      backgroundColor: appColors.panel,
       drawer: showDrawer
           ? _NavDrawer(
               activeSection: _activeSection,
@@ -3025,7 +2910,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
           : null,
       body: SafeArea(
         child: ColoredBox(
-          color: _panel,
+          color: appColors.panel,
           child: Row(
             children: [
               if (hasRail)
@@ -3165,7 +3050,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                         ? Center(
                             child: Text(
                               '暂无会话，等待局域网设备…',
-                              style: TextStyle(color: _muted, fontSize: 14),
+                              style: TextStyle(color: appColors.muted, fontSize: 14),
                             ),
                           )
                         : PopScope(
@@ -3276,8 +3161,8 @@ class _Sidebar extends StatelessWidget {
       margin: const EdgeInsets.all(12),
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
       decoration: BoxDecoration(
-        color: _sidebar,
-        border: Border.all(color: _line),
+        color: appColors.sidebar,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
         boxShadow: const [
           BoxShadow(
@@ -3296,7 +3181,7 @@ class _Sidebar extends StatelessWidget {
               customBorder: const CircleBorder(),
               child: CircleAvatar(
                 radius: 23,
-                backgroundColor: _accent,
+                backgroundColor: appColors.accent,
                 child: Text(
                   deviceAlias.initials,
                   style: const TextStyle(
@@ -3371,7 +3256,7 @@ class _NavDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Drawer(
-      backgroundColor: _surface,
+      backgroundColor: appColors.surface,
       child: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3387,7 +3272,7 @@ class _NavDrawer extends StatelessWidget {
                   children: [
                     CircleAvatar(
                       radius: 20,
-                      backgroundColor: _accent,
+                      backgroundColor: appColors.accent,
                       child: Text(
                         deviceAlias.initials,
                         style: const TextStyle(
@@ -3402,18 +3287,18 @@ class _NavDrawer extends StatelessWidget {
                         deviceAlias,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          color: _text,
+                          color: appColors.text,
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
                     ),
-                    Icon(Icons.chevron_right_rounded, color: _muted),
+                    Icon(Icons.chevron_right_rounded, color: appColors.muted),
                   ],
                 ),
               ),
             ),
-            Divider(height: 1, color: _line),
+            Divider(height: 1, color: appColors.line),
             _NavDrawerItem(
               icon: Icons.chat_bubble_rounded,
               label: '消息',
@@ -3473,17 +3358,17 @@ class _NavDrawerItem extends StatelessWidget {
   Widget build(BuildContext context) {
     return ListTile(
       onTap: onTap,
-      leading: Icon(icon, color: active ? _accent : _muted),
+      leading: Icon(icon, color: active ? appColors.accent : appColors.muted),
       title: Text(
         label,
         style: TextStyle(
-          color: active ? _accent : _text,
+          color: active ? appColors.accent : appColors.text,
           fontSize: 15,
           fontWeight: active ? FontWeight.w700 : FontWeight.w500,
         ),
       ),
       selected: active,
-      selectedTileColor: _accentSoft,
+      selectedTileColor: appColors.accentSoft,
     );
   }
 }
@@ -3508,14 +3393,14 @@ class _DeviceInfoRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 72,
-            child: Text(label, style: TextStyle(color: _muted, fontSize: 13)),
+            child: Text(label, style: TextStyle(color: appColors.muted, fontSize: 13)),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: SelectableText(
               value,
               style: TextStyle(
-                color: _text,
+                color: appColors.text,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -3539,28 +3424,28 @@ InputDecoration teaInputDecoration({String? labelText, String? hintText}) {
     labelText: labelText,
     hintText: hintText,
     filled: true,
-    fillColor: _panel,
+    fillColor: appColors.panel,
     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
-      borderSide: BorderSide(color: _line),
+      borderSide: BorderSide(color: appColors.line),
     ),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
-      borderSide: BorderSide(color: _line),
+      borderSide: BorderSide(color: appColors.line),
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
-      borderSide: BorderSide(color: _accent, width: 1.4),
+      borderSide: BorderSide(color: appColors.accent, width: 1.4),
     ),
-    labelStyle: TextStyle(color: _muted, fontSize: 13),
-    hintStyle: TextStyle(color: _sidebarMuted, fontSize: 13),
+    labelStyle: TextStyle(color: appColors.muted, fontSize: 13),
+    hintStyle: TextStyle(color: appColors.sidebarMuted, fontSize: 13),
   );
 }
 
 /// 输入框文本样式，确保暗黑模式下文本可见
 TextStyle teaInputTextStyle() {
-  return TextStyle(color: _text, fontSize: 14);
+  return TextStyle(color: appColors.text, fontSize: 14);
 }
 
 class TeaDialog extends StatelessWidget {
@@ -3587,8 +3472,8 @@ class TeaDialog extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: width),
         padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
         radius: BorderRadius.circular(8),
-        backgroundColor: _surface,
-        border: Border.all(color: _line),
+        backgroundColor: appColors.surface,
+        border: Border.all(color: appColors.line),
         shadows: const [
           BoxShadow(
             color: Color(0x2431302D),
@@ -3603,10 +3488,10 @@ class TeaDialog extends StatelessWidget {
                 width: 34,
                 height: 34,
                 decoration: BoxDecoration(
-                  color: _accentSoft,
+                  color: appColors.accentSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(icon, color: _accent, size: 19),
+                child: Icon(icon, color: appColors.accent, size: 19),
               ),
               const SizedBox(width: 12),
             ],
@@ -3614,7 +3499,7 @@ class TeaDialog extends StatelessWidget {
           ],
         ),
         titleStyle: TextStyle(
-          color: _text,
+          color: appColors.text,
           fontSize: 17,
           fontWeight: FontWeight.w800,
         ),
@@ -3647,10 +3532,10 @@ class TeaDialogButton extends StatelessWidget {
             onPressed: onPressed,
             width: 76,
             height: 38,
-            backgroundColor: _accent,
+            backgroundColor: appColors.accent,
             hoverBackgroundColor: Color.alphaBlend(
               Colors.black.withValues(alpha: 0.08),
-              _accent,
+              appColors.accent,
             ),
             foregroundColor: Colors.white,
             hoverForegroundColor: Colors.white,
@@ -3660,9 +3545,9 @@ class TeaDialogButton extends StatelessWidget {
             onPressed: onPressed,
             width: 76,
             height: 38,
-            foregroundColor: _muted,
-            hoverForegroundColor: _text,
-            hoverBackgroundColor: _accentSoft,
+            foregroundColor: appColors.muted,
+            hoverForegroundColor: appColors.text,
+            hoverBackgroundColor: appColors.accentSoft,
             child: Text(label),
           );
   }
@@ -3992,14 +3877,14 @@ class _NavIcon extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed ?? () {},
           icon: Icon(icon, size: 21),
-          color: active ? _accent : _sidebarMuted,
+          color: active ? appColors.accent : appColors.sidebarMuted,
           style: IconButton.styleFrom(
             fixedSize: const Size(42, 42),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
-            backgroundColor: active ? _accentSoft : Colors.transparent,
-            hoverColor: _accentSoft,
+            backgroundColor: active ? appColors.accentSoft : Colors.transparent,
+            hoverColor: appColors.accentSoft,
           ),
         ),
       ),
@@ -4026,7 +3911,7 @@ class ThemePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: _chatBg,
+      color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4034,8 +3919,8 @@ class ThemePage extends StatelessWidget {
             height: 74,
             padding: const EdgeInsets.symmetric(horizontal: 28),
             decoration: BoxDecoration(
-              color: _surface,
-              border: Border(bottom: BorderSide(color: _line)),
+              color: appColors.surface,
+              border: Border(bottom: BorderSide(color: appColors.line)),
             ),
             alignment: Alignment.centerLeft,
             child: Row(
@@ -4047,7 +3932,7 @@ class ThemePage extends StatelessWidget {
                 Text(
                   '主题',
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
                   ),
@@ -4061,8 +3946,8 @@ class ThemePage extends StatelessWidget {
               children: [
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: _surface,
-                    border: Border.all(color: _line),
+                    color: appColors.surface,
+                    border: Border.all(color: appColors.line),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Padding(
@@ -4087,8 +3972,8 @@ class ThemePage extends StatelessWidget {
                 const SizedBox(height: 14),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: _surface,
-                    border: Border.all(color: _line),
+                    color: appColors.surface,
+                    border: Border.all(color: appColors.line),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Padding(
@@ -4106,7 +3991,7 @@ class ThemePage extends StatelessWidget {
                           spacing: 12,
                           runSpacing: 12,
                           children: [
-                            for (final color in _themeColorOptions)
+                            for (final color in themeColorOptions)
                               _ThemeColorSwatch(
                                 color: color,
                                 selected:
@@ -4175,10 +4060,10 @@ class _ThemeModeOption extends StatelessWidget {
     return ShadButton.outline(
       onPressed: onPressed,
       height: 38,
-      backgroundColor: selected ? _accent : _surface,
-      hoverBackgroundColor: selected ? _accent : _accentSoft,
-      foregroundColor: selected ? Colors.white : _text,
-      hoverForegroundColor: selected ? Colors.white : _text,
+      backgroundColor: selected ? appColors.accent : appColors.surface,
+      hoverBackgroundColor: selected ? appColors.accent : appColors.accentSoft,
+      foregroundColor: selected ? Colors.white : appColors.text,
+      hoverForegroundColor: selected ? Colors.white : appColors.text,
       leading: Icon(icon, size: 18),
       child: Text(label),
     );
@@ -4204,10 +4089,10 @@ class _ThemeSectionHeader extends StatelessWidget {
           width: 42,
           height: 42,
           decoration: BoxDecoration(
-            color: _accentSoft,
+            color: appColors.accentSoft,
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(icon, color: _accent, size: 22),
+          child: Icon(icon, color: appColors.accent, size: 22),
         ),
         const SizedBox(width: 14),
         Expanded(
@@ -4217,13 +4102,13 @@ class _ThemeSectionHeader extends StatelessWidget {
               Text(
                 title,
                 style: TextStyle(
-                  color: _text,
+                  color: appColors.text,
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 4),
-              Text(description, style: TextStyle(color: _muted, fontSize: 13)),
+              Text(description, style: TextStyle(color: appColors.muted, fontSize: 13)),
             ],
           ),
         ),
@@ -4258,7 +4143,7 @@ class _ThemeColorSwatch extends StatelessWidget {
             color: color,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected ? _text : _line,
+              color: selected ? appColors.text : appColors.line,
               width: selected ? 2 : 1,
             ),
           ),
@@ -4334,7 +4219,7 @@ class SettingsPage extends StatelessWidget {
     );
 
     return Container(
-      color: _chatBg,
+      color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4342,8 +4227,8 @@ class SettingsPage extends StatelessWidget {
             height: 74,
             padding: const EdgeInsets.symmetric(horizontal: 28),
             decoration: BoxDecoration(
-              color: _surface,
-              border: Border(bottom: BorderSide(color: _line)),
+              color: appColors.surface,
+              border: Border(bottom: BorderSide(color: appColors.line)),
             ),
             alignment: Alignment.centerLeft,
             child: Row(
@@ -4355,7 +4240,7 @@ class SettingsPage extends StatelessWidget {
                 Text(
                   '设置',
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
                   ),
@@ -4371,8 +4256,8 @@ class SettingsPage extends StatelessWidget {
                 const SizedBox(height: 14),
                 DecoratedBox(
                   decoration: BoxDecoration(
-                    color: _surface,
-                    border: Border.all(color: _line),
+                    color: appColors.surface,
+                    border: Border.all(color: appColors.line),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Padding(
@@ -4386,12 +4271,12 @@ class SettingsPage extends StatelessWidget {
                               width: 42,
                               height: 42,
                               decoration: BoxDecoration(
-                                color: _accentSoft,
+                                color: appColors.accentSoft,
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Icon(
                                 Icons.save_alt_rounded,
-                                color: _accent,
+                                color: appColors.accent,
                                 size: 22,
                               ),
                             ),
@@ -4403,7 +4288,7 @@ class SettingsPage extends StatelessWidget {
                                   Text(
                                     '自动保存',
                                     style: TextStyle(
-                                      color: _text,
+                                      color: appColors.text,
                                       fontSize: 16,
                                       fontWeight: FontWeight.w800,
                                     ),
@@ -4414,7 +4299,7 @@ class SettingsPage extends StatelessWidget {
                                         ? '开启后，对方发来的文件会自动保存到“下载/NearSend”'
                                         : '开启后，对方发来的文件会自动保存到指定路径',
                                     style: TextStyle(
-                                      color: _muted,
+                                      color: appColors.muted,
                                       fontSize: 13,
                                     ),
                                   ),
@@ -4423,7 +4308,7 @@ class SettingsPage extends StatelessWidget {
                             ),
                             ShadSwitch(
                               value: autoSaveEnabled,
-                              checkedTrackColor: _accent,
+                              checkedTrackColor: appColors.accent,
                               onChanged: onAutoSaveChanged,
                             ),
                           ],
@@ -4437,14 +4322,14 @@ class SettingsPage extends StatelessWidget {
                             alignment: Alignment.centerLeft,
                             padding: const EdgeInsets.symmetric(horizontal: 12),
                             decoration: BoxDecoration(
-                              color: _panel,
-                              border: Border.all(color: _line),
+                              color: appColors.panel,
+                              border: Border.all(color: appColors.line),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
                               '下载/NearSend',
                               style: TextStyle(
-                                color: _text,
+                                color: appColors.text,
                                 fontSize: 13,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -4461,15 +4346,15 @@ class SettingsPage extends StatelessWidget {
                                     horizontal: 12,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: _panel,
-                                    border: Border.all(color: _line),
+                                    color: appColors.panel,
+                                    border: Border.all(color: appColors.line),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: SelectableText(
                                     autoSaveDirectory,
                                     maxLines: 1,
                                     style: TextStyle(
-                                      color: _text,
+                                      color: appColors.text,
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -4483,10 +4368,10 @@ class SettingsPage extends StatelessWidget {
                                   Icons.folder_open_rounded,
                                   size: 20,
                                 ),
-                                color: _text,
+                                color: appColors.text,
                                 style: IconButton.styleFrom(
                                   fixedSize: const Size(42, 42),
-                                  side: BorderSide(color: _line),
+                                  side: BorderSide(color: appColors.line),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
@@ -4510,8 +4395,8 @@ class SettingsPage extends StatelessWidget {
                 if (tempCleanupService != null)
                   DecoratedBox(
                     decoration: BoxDecoration(
-                      color: _surface,
-                      border: Border.all(color: _line),
+                      color: appColors.surface,
+                      border: Border.all(color: appColors.line),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Padding(
@@ -4525,12 +4410,12 @@ class SettingsPage extends StatelessWidget {
                                 width: 42,
                                 height: 42,
                                 decoration: BoxDecoration(
-                                  color: _accentSoft,
+                                  color: appColors.accentSoft,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Icon(
                                   Icons.cleaning_services_rounded,
-                                  color: _accent,
+                                  color: appColors.accent,
                                   size: 22,
                                 ),
                               ),
@@ -4542,7 +4427,7 @@ class SettingsPage extends StatelessWidget {
                                     Text(
                                       '临时文件清理',
                                       style: TextStyle(
-                                        color: _text,
+                                        color: appColors.text,
                                         fontSize: 16,
                                         fontWeight: FontWeight.w800,
                                       ),
@@ -4551,7 +4436,7 @@ class SettingsPage extends StatelessWidget {
                                     Text(
                                       '清理接收文件产生的临时数据',
                                       style: TextStyle(
-                                        color: _muted,
+                                        color: appColors.muted,
                                         fontSize: 13,
                                       ),
                                     ),
@@ -4621,8 +4506,8 @@ class _SettingsSwitchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -4633,10 +4518,10 @@ class _SettingsSwitchCard extends StatelessWidget {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: _accentSoft,
+                color: appColors.accentSoft,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: _accent, size: 22),
+              child: Icon(icon, color: appColors.accent, size: 22),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -4646,7 +4531,7 @@ class _SettingsSwitchCard extends StatelessWidget {
                   Text(
                     title,
                     style: TextStyle(
-                      color: _text,
+                      color: appColors.text,
                       fontSize: 16,
                       fontWeight: FontWeight.w800,
                     ),
@@ -4654,14 +4539,14 @@ class _SettingsSwitchCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     description,
-                    style: TextStyle(color: _muted, fontSize: 13),
+                    style: TextStyle(color: appColors.muted, fontSize: 13),
                   ),
                 ],
               ),
             ),
             ShadSwitch(
               value: value,
-              checkedTrackColor: _accent,
+              checkedTrackColor: appColors.accent,
               enabled: onChanged != null,
               onChanged: onChanged,
             ),
@@ -4716,7 +4601,7 @@ class FirewallRepairCard extends StatelessWidget {
     final icon = ok
         ? Icons.verified_user_rounded
         : Icons.security_update_warning_rounded;
-    final iconColor = ok ? const Color(0xFF27A95D) : _warning;
+    final iconColor = ok ? const Color(0xFF27A95D) : warning;
     final diagnosticText = _diagnosticText(
       current,
       lastRepair,
@@ -4725,8 +4610,8 @@ class FirewallRepairCard extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -4740,7 +4625,7 @@ class FirewallRepairCard extends StatelessWidget {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: _accentSoft,
+                    color: appColors.accentSoft,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(icon, color: iconColor, size: 22),
@@ -4753,7 +4638,7 @@ class FirewallRepairCard extends StatelessWidget {
                       Text(
                         title,
                         style: TextStyle(
-                          color: _text,
+                          color: appColors.text,
                           fontSize: 16,
                           fontWeight: FontWeight.w800,
                         ),
@@ -4761,7 +4646,7 @@ class FirewallRepairCard extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         description,
-                        style: TextStyle(color: _muted, fontSize: 13),
+                        style: TextStyle(color: appColors.muted, fontSize: 13),
                       ),
                     ],
                   ),
@@ -4806,7 +4691,7 @@ class FirewallRepairCard extends StatelessWidget {
                   ? 'last inbound: none'
                   : 'last inbound: $lastInboundRequest',
               style: TextStyle(
-                color: _muted,
+                color: appColors.muted,
                 fontSize: 12,
                 fontFamily: 'monospace',
               ),
@@ -4817,7 +4702,7 @@ class FirewallRepairCard extends StatelessWidget {
                   ? 'local http: unchecked'
                   : 'local http: $localHttpStatus',
               style: TextStyle(
-                color: _muted,
+                color: appColors.muted,
                 fontSize: 12,
                 fontFamily: 'monospace',
               ),
@@ -4828,7 +4713,7 @@ class FirewallRepairCard extends StatelessWidget {
                   ? 'local endpoints: none'
                   : 'local endpoints:\n${localEndpoints.join('\n')}',
               style: TextStyle(
-                color: _muted,
+                color: appColors.muted,
                 fontSize: 12,
                 fontFamily: 'monospace',
               ),
@@ -4857,7 +4742,7 @@ class FirewallRepairCard extends StatelessWidget {
                 ShadButton(
                   onPressed: checking || repairing ? null : onRepair,
                   height: 34,
-                  backgroundColor: _accent,
+                  backgroundColor: appColors.accent,
                   foregroundColor: Colors.white,
                   hoverForegroundColor: Colors.white,
                   child: Text(repairing ? '等待授权' : '一键修复'),
@@ -4870,7 +4755,7 @@ class FirewallRepairCard extends StatelessWidget {
                 diagnosticText,
                 maxLines: 8,
                 style: TextStyle(
-                  color: _muted,
+                  color: appColors.muted,
                   fontSize: 12,
                   height: 1.35,
                   fontFamily: 'monospace',
@@ -4997,10 +4882,10 @@ class _FirewallStatusChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = loading
-        ? _muted
+        ? appColors.muted
         : ok
         ? const Color(0xFF27A95D)
-        : _warning;
+        : warning;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -5168,18 +5053,18 @@ class _TempFileCleanupWidgetState extends State<_TempFileCleanupWidget> {
                       onPressed: !_isLoading ? _performCleanup : null,
                       width: double.infinity,
                       height: 38,
-                      backgroundColor: _accent,
+                      backgroundColor: appColors.accent,
                       foregroundColor: Colors.white,
                       hoverForegroundColor: Colors.white,
-                      hoverBackgroundColor: _accent.withValues(alpha: 0.9),
+                      hoverBackgroundColor: appColors.accent.withValues(alpha: 0.9),
                       child: Text(_isLoading ? '清理中...' : '清理过期文件'),
                     )
                   : ShadButton.outline(
                       onPressed: null,
                       width: double.infinity,
                       height: 38,
-                      backgroundColor: _surface,
-                      foregroundColor: _muted,
+                      backgroundColor: appColors.surface,
+                      foregroundColor: appColors.muted,
                       child: const Text('清理过期文件'),
                     ),
             ),
@@ -5189,8 +5074,8 @@ class _TempFileCleanupWidgetState extends State<_TempFileCleanupWidget> {
                 onPressed: hasFiles && !_isLoading ? _performFullCleanup : null,
                 width: double.infinity,
                 height: 38,
-                foregroundColor: hasFiles ? _text : _muted,
-                hoverBackgroundColor: _accentSoft,
+                foregroundColor: hasFiles ? appColors.text : appColors.muted,
+                hoverBackgroundColor: appColors.accentSoft,
                 child: const Text('全部清理'),
               ),
             ),
@@ -5260,12 +5145,12 @@ class _StatItem extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(color: _muted, fontSize: 12)),
+        Text(label, style: TextStyle(color: appColors.muted, fontSize: 12)),
         const SizedBox(height: 4),
         Text(
           value,
           style: TextStyle(
-            color: valueColor ?? _text,
+            color: valueColor ?? appColors.text,
             fontSize: 15,
             fontWeight: FontWeight.w700,
           ),
@@ -5320,7 +5205,7 @@ class _CleanupOptionRowState extends State<_CleanupOptionRow> {
               Text(
                 widget.label,
                 style: TextStyle(
-                  color: _text,
+                  color: appColors.text,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
@@ -5328,7 +5213,7 @@ class _CleanupOptionRowState extends State<_CleanupOptionRow> {
               const SizedBox(height: 2),
               Text(
                 widget.description,
-                style: TextStyle(color: _muted, fontSize: 12),
+                style: TextStyle(color: appColors.muted, fontSize: 12),
               ),
             ],
           ),
@@ -5336,7 +5221,7 @@ class _CleanupOptionRowState extends State<_CleanupOptionRow> {
         const SizedBox(width: 10),
         ShadSwitch(
           value: _value,
-          checkedTrackColor: _accent,
+          checkedTrackColor: appColors.accent,
           onChanged: (value) {
             setState(() {
               _value = value;
@@ -5387,13 +5272,13 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
               Text(
                 '清理超过',
                 style: TextStyle(
-                  color: _text,
+                  color: appColors.text,
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 2),
-              Text('自动清理保留天数', style: TextStyle(color: _muted, fontSize: 12)),
+              Text('自动清理保留天数', style: TextStyle(color: appColors.muted, fontSize: 12)),
             ],
           ),
         ),
@@ -5401,8 +5286,8 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
         Container(
           height: 32,
           decoration: BoxDecoration(
-            color: _panel,
-            border: Border.all(color: _line),
+            color: appColors.panel,
+            border: Border.all(color: appColors.line),
             borderRadius: BorderRadius.circular(6),
           ),
           child: Row(
@@ -5419,7 +5304,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
                 icon: Icon(
                   Icons.remove_rounded,
                   size: 18,
-                  color: _days > 1 ? _muted : _line,
+                  color: _days > 1 ? appColors.muted : appColors.line,
                 ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -5430,7 +5315,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
                 child: Text(
                   '$_days',
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
@@ -5448,7 +5333,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
                 icon: Icon(
                   Icons.add_rounded,
                   size: 18,
-                  color: _days < 365 ? _muted : _line,
+                  color: _days < 365 ? appColors.muted : appColors.line,
                 ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -5457,7 +5342,7 @@ class _CleanupDaysRowState extends State<_CleanupDaysRow> {
           ),
         ),
         const SizedBox(width: 10),
-        Text('天', style: TextStyle(color: _muted, fontSize: 14)),
+        Text('天', style: TextStyle(color: appColors.muted, fontSize: 14)),
       ],
     );
   }
@@ -5484,7 +5369,7 @@ class TransfersPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: _chatBg,
+      color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -5492,8 +5377,8 @@ class TransfersPage extends StatelessWidget {
             height: 74,
             padding: const EdgeInsets.symmetric(horizontal: 28),
             decoration: BoxDecoration(
-              color: _surface,
-              border: Border(bottom: BorderSide(color: _line)),
+              color: appColors.surface,
+              border: Border(bottom: BorderSide(color: appColors.line)),
             ),
             alignment: Alignment.centerLeft,
             child: Row(
@@ -5505,7 +5390,7 @@ class TransfersPage extends StatelessWidget {
                 Text(
                   '传输任务',
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
                   ),
@@ -5518,7 +5403,7 @@ class TransfersPage extends StatelessWidget {
                 ? Center(
                     child: Text(
                       '暂无传输任务',
-                      style: TextStyle(color: _muted, fontSize: 14),
+                      style: TextStyle(color: appColors.muted, fontSize: 14),
                     ),
                   )
                 : ListView.separated(
@@ -5569,9 +5454,9 @@ class TransferTaskCard extends StatelessWidget {
 
     return ShadCard(
       padding: const EdgeInsets.all(16),
-      backgroundColor: _surface,
+      backgroundColor: appColors.surface,
       radius: BorderRadius.circular(8),
-      border: ShadBorder.all(color: _line, width: 1),
+      border: ShadBorder.all(color: appColors.line, width: 1),
       shadows: const [],
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5582,10 +5467,10 @@ class TransferTaskCard extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: _accentSoft,
+                  color: appColors.accentSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(_iconForTask(task), color: _accent, size: 22),
+                child: Icon(_iconForTask(task), color: appColors.accent, size: 22),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -5597,7 +5482,7 @@ class TransferTaskCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                        color: _text,
+                        color: appColors.text,
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
@@ -5607,7 +5492,7 @@ class TransferTaskCard extends StatelessWidget {
                       '${_directionLabel(task)} · ${task.peerAlias} · ${formatBytes(task.totalBytes)}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: _muted, fontSize: 12),
+                      style: TextStyle(color: appColors.muted, fontSize: 12),
                     ),
                   ],
                 ),
@@ -5635,8 +5520,8 @@ class TransferTaskCard extends StatelessWidget {
           StableProgressBar(
             value: progress,
             height: 6,
-            color: _accent,
-            backgroundColor: _accentSoft,
+            color: appColors.accent,
+            backgroundColor: appColors.accentSoft,
           ),
           const SizedBox(height: 10),
           Row(
@@ -5644,22 +5529,22 @@ class TransferTaskCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   task.subtitle ?? _statusLabel(task.status),
-                  style: TextStyle(color: _muted, fontSize: 12),
+                  style: TextStyle(color: appColors.muted, fontSize: 12),
                 ),
               ),
               if (isWaiting) ...[
                 ShadButton.ghost(
                   onPressed: onDecline,
                   height: 34,
-                  foregroundColor: _muted,
-                  hoverForegroundColor: _text,
+                  foregroundColor: appColors.muted,
+                  hoverForegroundColor: appColors.text,
                   child: const Text('拒绝'),
                 ),
                 const SizedBox(width: 8),
                 ShadButton(
                   onPressed: onAccept,
                   height: 34,
-                  backgroundColor: _accent,
+                  backgroundColor: appColors.accent,
                   foregroundColor: Colors.white,
                   hoverForegroundColor: Colors.white,
                   child: const Text('接收'),
@@ -5701,11 +5586,11 @@ class _TransferStatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (status) {
-      TransferTaskStatus.waiting => _warning,
-      TransferTaskStatus.transferring => _accent,
+      TransferTaskStatus.waiting => warning,
+      TransferTaskStatus.transferring => appColors.accent,
       TransferTaskStatus.completed => const Color(0xFF27A95D),
       TransferTaskStatus.failed => const Color(0xFFC85D4D),
-      TransferTaskStatus.cancelled => _muted,
+      TransferTaskStatus.cancelled => appColors.muted,
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -5736,13 +5621,13 @@ class _TransferFileChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: _accentSoft,
-        border: Border.all(color: _line),
+        color: appColors.accentSoft,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
         size <= 0 ? name : '$name · ${formatBytes(size)}',
-        style: TextStyle(color: _text, fontSize: 12),
+        style: TextStyle(color: appColors.text, fontSize: 12),
       ),
     );
   }
@@ -5843,7 +5728,7 @@ class _HistoryPageState extends State<HistoryPage> {
         .length;
 
     return Container(
-      color: _chatBg,
+      color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -5851,8 +5736,8 @@ class _HistoryPageState extends State<HistoryPage> {
             height: 74,
             padding: const EdgeInsets.symmetric(horizontal: 28),
             decoration: BoxDecoration(
-              color: _surface,
-              border: Border(bottom: BorderSide(color: _line)),
+              color: appColors.surface,
+              border: Border(bottom: BorderSide(color: appColors.line)),
             ),
             child: Row(
               children: [
@@ -5863,7 +5748,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 Text(
                   '文件记录',
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
                   ),
@@ -5871,7 +5756,7 @@ class _HistoryPageState extends State<HistoryPage> {
                 const SizedBox(width: 10),
                 Text(
                   hasEntries ? '${widget.entries.length} 条' : '',
-                  style: TextStyle(color: _muted, fontSize: 13),
+                  style: TextStyle(color: appColors.muted, fontSize: 13),
                 ),
                 const Spacer(),
                 if (staleCount > 0)
@@ -5882,14 +5767,14 @@ class _HistoryPageState extends State<HistoryPage> {
                       size: 17,
                     ),
                     label: Text('清理失效 ($staleCount)'),
-                    style: TextButton.styleFrom(foregroundColor: _muted),
+                    style: TextButton.styleFrom(foregroundColor: appColors.muted),
                   ),
                 if (hasEntries)
                   TextButton.icon(
                     onPressed: widget.onClear,
                     icon: const Icon(Icons.delete_sweep_rounded, size: 18),
                     label: const Text('清空'),
-                    style: TextButton.styleFrom(foregroundColor: _muted),
+                    style: TextButton.styleFrom(foregroundColor: appColors.muted),
                   ),
               ],
             ),
@@ -5925,7 +5810,7 @@ class _HistoryPageState extends State<HistoryPage> {
                           child: Text(
                             row,
                             style: TextStyle(
-                              color: _muted,
+                              color: appColors.muted,
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
                             ),
@@ -5959,10 +5844,10 @@ class _HistoryPageState extends State<HistoryPage> {
           Icon(
             Icons.inbox_rounded,
             size: 46,
-            color: _muted.withValues(alpha: 0.5),
+            color: appColors.muted.withValues(alpha: 0.5),
           ),
           const SizedBox(height: 12),
-          Text(label, style: TextStyle(color: _muted, fontSize: 14)),
+          Text(label, style: TextStyle(color: appColors.muted, fontSize: 14)),
         ],
       ),
     );
@@ -5986,25 +5871,25 @@ class _HistorySearchField extends StatelessWidget {
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
-          Icon(Icons.search_rounded, size: 18, color: _muted),
+          Icon(Icons.search_rounded, size: 18, color: appColors.muted),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
               controller: controller,
               onChanged: onChanged,
-              style: TextStyle(color: _text, fontSize: 14),
-              cursorColor: _accent,
+              style: TextStyle(color: appColors.text, fontSize: 14),
+              cursorColor: appColors.accent,
               decoration: InputDecoration(
                 isCollapsed: true,
                 border: InputBorder.none,
                 hintText: '搜索文件名或发送方',
-                hintStyle: TextStyle(color: _muted, fontSize: 14),
+                hintStyle: TextStyle(color: appColors.muted, fontSize: 14),
               ),
             ),
           ),
@@ -6017,7 +5902,7 @@ class _HistorySearchField extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
                 child: Padding(
                   padding: const EdgeInsets.all(2),
-                  child: Icon(Icons.close_rounded, size: 16, color: _muted),
+                  child: Icon(Icons.close_rounded, size: 16, color: appColors.muted),
                 ),
               );
             },
@@ -6051,8 +5936,8 @@ class _HistoryTile extends StatelessWidget {
     final kind = FileKind.fromExtension(p.extension(entry.fileName));
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -6065,10 +5950,10 @@ class _HistoryTile extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: _accentSoft,
+                  color: appColors.accentSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(kind.icon, color: _accent, size: 22),
+                child: Icon(kind.icon, color: appColors.accent, size: 22),
               ),
             ),
             const SizedBox(width: 14),
@@ -6081,7 +5966,7 @@ class _HistoryTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: stale ? _muted : _text,
+                      color: stale ? appColors.muted : appColors.text,
                       fontWeight: FontWeight.w700,
                       fontSize: 14,
                     ),
@@ -6094,7 +5979,7 @@ class _HistoryTile extends StatelessWidget {
                           '${_formatBytes(entry.size)} · ${entry.senderAlias} · ${_formatTime(entry.receivedAt)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: _muted, fontSize: 12),
+                          style: TextStyle(color: appColors.muted, fontSize: 12),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -6165,7 +6050,7 @@ class _HistoryBadge extends StatelessWidget {
     final label = stale ? '已失效' : (autoSaved ? '已保存' : '临时');
     final color = stale
         ? const Color(0xFFC85D4D)
-        : (autoSaved ? _accent : _muted);
+        : (autoSaved ? appColors.accent : appColors.muted);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
@@ -6204,7 +6089,7 @@ class _HistoryAction extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: Icon(icon, size: 18),
-        color: color ?? _muted,
+        color: color ?? appColors.muted,
         style: IconButton.styleFrom(
           fixedSize: const Size(34, 34),
           minimumSize: const Size(34, 34),
@@ -6265,8 +6150,8 @@ class ConversationPanel extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
         boxShadow: const [
           BoxShadow(
@@ -6282,8 +6167,8 @@ class ConversationPanel extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
             decoration: BoxDecoration(
               border: Border(
-                right: BorderSide(color: _line),
-                bottom: BorderSide(color: _line),
+                right: BorderSide(color: appColors.line),
+                bottom: BorderSide(color: appColors.line),
               ),
             ),
             child: Column(
@@ -6324,9 +6209,9 @@ class ConversationPanel extends StatelessWidget {
                       child: isScanning
                           ? CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: _accent,
+                              color: appColors.accent,
                             )
-                          : Icon(Icons.lan_rounded, size: 15, color: _muted),
+                          : Icon(Icons.lan_rounded, size: 15, color: appColors.muted),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -6334,7 +6219,7 @@ class ConversationPanel extends StatelessWidget {
                         scanStatus,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: _muted, fontSize: 12),
+                        style: TextStyle(color: appColors.muted, fontSize: 12),
                       ),
                     ),
                   ],
@@ -6391,13 +6276,13 @@ class ConversationPanel extends StatelessWidget {
                         _SwipeAction(
                           icon: Icons.edit_rounded,
                           label: '备注',
-                          color: _accent,
+                          color: appColors.accent,
                           onTap: () => onEditRemark?.call(index),
                         ),
                         _SwipeAction(
                           icon: Icons.cleaning_services_rounded,
                           label: '清空',
-                          color: _warning,
+                          color: warning,
                           onTap: () => onClearRecords?.call(index),
                         ),
                         _SwipeAction(
@@ -6415,7 +6300,7 @@ class ConversationPanel extends StatelessWidget {
                 if (!Platform.isAndroid) return list;
                 return RefreshIndicator(
                   onRefresh: onRefresh,
-                  color: _accent,
+                  color: appColors.accent,
                   child: list,
                 );
               },
@@ -6452,10 +6337,10 @@ class _ToolButton extends StatelessWidget {
             width: 42,
             height: 42,
             padding: EdgeInsets.zero,
-            backgroundColor: _surface,
-            foregroundColor: _muted,
-            hoverForegroundColor: _text,
-            hoverBackgroundColor: _accentSoft,
+            backgroundColor: appColors.surface,
+            foregroundColor: appColors.muted,
+            hoverForegroundColor: appColors.text,
+            hoverBackgroundColor: appColors.accentSoft,
             child: Icon(icon, size: 19),
           ),
         ),
@@ -6485,12 +6370,12 @@ class _IconShadButton extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed,
           icon: Icon(icon, size: 20),
-          color: color ?? _muted,
+          color: color ?? appColors.muted,
           style: IconButton.styleFrom(
             fixedSize: const Size(42, 42),
             backgroundColor: Colors.transparent,
-            foregroundColor: color ?? _muted,
-            hoverColor: _accentSoft,
+            foregroundColor: color ?? appColors.muted,
+            hoverColor: appColors.accentSoft,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -6513,10 +6398,10 @@ class _SendShadButton extends StatelessWidget {
       onPressed: onPressed,
       height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 18),
-      backgroundColor: _accent,
+      backgroundColor: appColors.accent,
       hoverBackgroundColor: Color.alphaBlend(
         Colors.black.withValues(alpha: 0.08),
-        _accent,
+        appColors.accent,
       ),
       foregroundColor: Colors.white,
       hoverForegroundColor: Colors.white,
@@ -6551,7 +6436,7 @@ class _ComposerShadTextarea extends StatelessWidget {
           width: 0,
         ),
       ),
-      style: TextStyle(color: _text, fontSize: 14, height: 1.55),
+      style: TextStyle(color: appColors.text, fontSize: 14, height: 1.55),
       onSubmitted: (_) => onSend(),
     );
   }
@@ -6599,11 +6484,11 @@ class ConversationTile extends StatelessWidget {
             margin: EdgeInsets.only(left: selected ? 2 : 0),
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: selected ? _accentSoft : Colors.transparent,
+              color: selected ? appColors.accentSoft : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: selected
-                    ? _accent.withValues(alpha: 0.24)
+                    ? appColors.accent.withValues(alpha: 0.24)
                     : Colors.transparent,
               ),
               boxShadow: selected
@@ -6632,7 +6517,7 @@ class ConversationTile extends StatelessWidget {
                               conversation.title,
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: _text,
+                                color: appColors.text,
                                 fontSize: 15,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -6640,7 +6525,7 @@ class ConversationTile extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           if (favorite) ...[
-                            Icon(Icons.star_rounded, color: _warning, size: 16),
+                            Icon(Icons.star_rounded, color: warning, size: 16),
                             const SizedBox(width: 5),
                           ],
                           if (conversation.device != null)
@@ -6649,7 +6534,7 @@ class ConversationTile extends StatelessWidget {
                                   ? Icons.wifi_rounded
                                   : Icons
                                         .signal_wifi_connected_no_internet_4_rounded,
-                              color: online ? const Color(0xFF27A95D) : _muted,
+                              color: online ? const Color(0xFF27A95D) : appColors.muted,
                               size: 16,
                             )
                           else
@@ -6667,7 +6552,7 @@ class ConversationTile extends StatelessWidget {
                         conversation.subtitle,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: _muted, fontSize: 13),
+                        style: TextStyle(color: appColors.muted, fontSize: 13),
                       ),
                     ],
                   ),
@@ -6679,7 +6564,7 @@ class ConversationTile extends StatelessWidget {
                     constraints: const BoxConstraints(minWidth: 20),
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     decoration: BoxDecoration(
-                      color: _warning,
+                      color: warning,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     alignment: Alignment.center,
@@ -6814,7 +6699,7 @@ class _SwipeActionTileState extends State<_SwipeActionTile>
                   // transparent unless selected, so without this the actions
                   // would bleed through any unselected row.
                   child: ColoredBox(
-                    color: _panel,
+                    color: appColors.panel,
                     child: Stack(
                       children: [
                         GestureDetector(
@@ -7015,8 +6900,8 @@ class ChatPanel extends StatelessWidget {
       margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: _chatBg,
-        border: Border.all(color: _line),
+        color: appColors.chatBg,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
         boxShadow: const [
           BoxShadow(
@@ -7089,7 +6974,7 @@ class ChatPanel extends StatelessWidget {
                             Text(
                               '传输队列',
                               style: TextStyle(
-                                color: _muted,
+                                color: appColors.muted,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -7297,8 +7182,8 @@ class ChatHeader extends StatelessWidget {
       height: 74,
       padding: const EdgeInsets.symmetric(horizontal: 24),
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border(bottom: BorderSide(color: _line)),
+        color: appColors.surface,
+        border: Border(bottom: BorderSide(color: appColors.line)),
       ),
       child: Row(
         children: [
@@ -7323,7 +7208,7 @@ class ChatHeader extends StatelessWidget {
                       : conversation.title,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 18,
                     fontWeight: FontWeight.w700,
                   ),
@@ -7333,7 +7218,7 @@ class ChatHeader extends StatelessWidget {
                   Text(
                     selectionMode ? '批量删除聊天记录' : conversation.title,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: _muted, fontSize: 13),
+                    style: TextStyle(color: appColors.muted, fontSize: 13),
                   ),
                 ],
               ],
@@ -7357,7 +7242,7 @@ class ChatHeader extends StatelessWidget {
               icon: Icons.delete_outline_rounded,
               tooltip: hasSelection ? '删除选中消息' : '先选择消息',
               onPressed: hasSelection ? onDeleteSelectedMessages : null,
-              color: hasSelection ? const Color(0xFFC85D4D) : _muted,
+              color: hasSelection ? const Color(0xFFC85D4D) : appColors.muted,
             ),
             _HeaderButton(
               icon: Icons.close_rounded,
@@ -7420,7 +7305,7 @@ class _PageMenuButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: const Icon(Icons.menu_rounded, size: 22),
-        color: _text,
+        color: appColors.text,
         style: IconButton.styleFrom(
           fixedSize: const Size(42, 42),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -7492,10 +7377,10 @@ class MessageTimeDivider extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: _panel,
+          color: appColors.panel,
           borderRadius: BorderRadius.circular(999),
         ),
-        child: Text(label, style: TextStyle(color: _muted, fontSize: 12)),
+        child: Text(label, style: TextStyle(color: appColors.muted, fontSize: 12)),
       ),
     );
   }
@@ -7541,7 +7426,7 @@ class DeviceDetailsPage extends StatelessWidget {
     final device = conversation.device;
     return Container(
       width: double.infinity,
-      color: _chatBg,
+      color: appColors.chatBg,
       child: device == null
           ? const _DeviceDetailsEmpty()
           : ListView(
@@ -7559,7 +7444,7 @@ class DeviceDetailsPage extends StatelessWidget {
                             device.alias,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              color: _text,
+                              color: appColors.text,
                               fontSize: 22,
                               fontWeight: FontWeight.w800,
                             ),
@@ -7568,7 +7453,7 @@ class DeviceDetailsPage extends StatelessWidget {
                           Text(
                             '${device.deviceType.label} · ${device.displayModel}',
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: _muted, fontSize: 13),
+                            style: TextStyle(color: appColors.muted, fontSize: 13),
                           ),
                         ],
                       ),
@@ -7639,8 +7524,8 @@ class _DeviceAutoSendCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -7651,12 +7536,12 @@ class _DeviceAutoSendCard extends StatelessWidget {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: _accentSoft,
+                color: appColors.accentSoft,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Icon(
                 Icons.content_paste_go_rounded,
-                color: _accent,
+                color: appColors.accent,
                 size: 22,
               ),
             ),
@@ -7668,7 +7553,7 @@ class _DeviceAutoSendCard extends StatelessWidget {
                   Text(
                     '自动发送截图',
                     style: TextStyle(
-                      color: _text,
+                      color: appColors.text,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
@@ -7676,7 +7561,7 @@ class _DeviceAutoSendCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     '截屏并复制到剪贴板后，自动把图片发送到此设备',
-                    style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
+                    style: TextStyle(color: appColors.muted, fontSize: 12, height: 1.4),
                   ),
                 ],
               ),
@@ -7684,7 +7569,7 @@ class _DeviceAutoSendCard extends StatelessWidget {
             const SizedBox(width: 12),
             Switch(
               value: enabled,
-              activeThumbColor: _accent,
+              activeThumbColor: appColors.accent,
               onChanged: onChanged,
             ),
           ],
@@ -7713,8 +7598,8 @@ class _DeviceSwitchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -7725,10 +7610,10 @@ class _DeviceSwitchCard extends StatelessWidget {
               width: 42,
               height: 42,
               decoration: BoxDecoration(
-                color: _accentSoft,
+                color: appColors.accentSoft,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: _accent, size: 22),
+              child: Icon(icon, color: appColors.accent, size: 22),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -7738,7 +7623,7 @@ class _DeviceSwitchCard extends StatelessWidget {
                   Text(
                     title,
                     style: TextStyle(
-                      color: _text,
+                      color: appColors.text,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,
                     ),
@@ -7746,7 +7631,7 @@ class _DeviceSwitchCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     description,
-                    style: TextStyle(color: _muted, fontSize: 12, height: 1.4),
+                    style: TextStyle(color: appColors.muted, fontSize: 12, height: 1.4),
                   ),
                 ],
               ),
@@ -7754,7 +7639,7 @@ class _DeviceSwitchCard extends StatelessWidget {
             const SizedBox(width: 12),
             Switch(
               value: enabled,
-              activeThumbColor: _accent,
+              activeThumbColor: appColors.accent,
               onChanged: onChanged,
             ),
           ],
@@ -7773,12 +7658,12 @@ class _DeviceDetailsEmpty extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.info_outline_rounded, color: _muted, size: 34),
+          Icon(Icons.info_outline_rounded, color: appColors.muted, size: 34),
           const SizedBox(height: 12),
           Text(
             '当前会话没有设备信息',
             style: TextStyle(
-              color: _text,
+              color: appColors.text,
               fontSize: 16,
               fontWeight: FontWeight.w700,
             ),
@@ -7786,7 +7671,7 @@ class _DeviceDetailsEmpty extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             '通过局域网发现或手动连接的设备会显示完整详情',
-            style: TextStyle(color: _muted, fontSize: 13),
+            style: TextStyle(color: appColors.muted, fontSize: 13),
           ),
         ],
       ),
@@ -7804,8 +7689,8 @@ class _DeviceDetailSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -7816,7 +7701,7 @@ class _DeviceDetailSection extends StatelessWidget {
             Text(
               title,
               style: TextStyle(
-                color: _text,
+                color: appColors.text,
                 fontSize: 14,
                 fontWeight: FontWeight.w800,
               ),
@@ -7846,14 +7731,14 @@ class _DeviceDetailLine extends StatelessWidget {
             width: 92,
             child: Text(
               row.label,
-              style: TextStyle(color: _muted, fontSize: 13),
+              style: TextStyle(color: appColors.muted, fontSize: 13),
             ),
           ),
           Expanded(
             child: SelectableText(
               row.value,
               style: TextStyle(
-                color: _text,
+                color: appColors.text,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
@@ -7919,7 +7804,7 @@ class MessageBubble extends StatelessWidget {
               value: selected,
               onChanged: (_) => onToggleSelected(),
               visualDensity: VisualDensity.compact,
-              activeColor: _accent,
+              activeColor: appColors.accent,
             ),
           ),
           Expanded(child: bubble),
@@ -7936,12 +7821,12 @@ class MessageBubble extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 18),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: _panel,
+            color: appColors.panel,
             borderRadius: BorderRadius.circular(999),
           ),
           child: Text(
             message.text,
-            style: TextStyle(color: _muted, fontSize: 12),
+            style: TextStyle(color: appColors.muted, fontSize: 12),
           ),
         ),
       );
@@ -8013,7 +7898,7 @@ class RetrySendButton extends StatelessWidget {
           minimumSize: const Size(30, 30),
           padding: EdgeInsets.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: _surface,
+          backgroundColor: appColors.surface,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -8039,7 +7924,7 @@ class CancelTransferButton extends StatelessWidget {
           minimumSize: const Size(30, 30),
           padding: EdgeInsets.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: _surface,
+          backgroundColor: appColors.surface,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
@@ -8065,14 +7950,14 @@ class TransferProgressBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(999),
               child: LinearProgressIndicator(
                 value: progress.clamp(0.0, 1.0),
-                color: _accent,
-                backgroundColor: _panel,
+                color: appColors.accent,
+                backgroundColor: appColors.panel,
               ),
             ),
           ),
         ),
         const SizedBox(width: 8),
-        Text('$percent%', style: TextStyle(color: _muted, fontSize: 12)),
+        Text('$percent%', style: TextStyle(color: appColors.muted, fontSize: 12)),
       ],
     );
   }
@@ -8090,7 +7975,7 @@ class CopyAttachmentButton extends StatelessWidget {
       child: IconButton(
         onPressed: onPressed,
         icon: const Icon(Icons.copy_rounded, size: 16),
-        color: _muted,
+        color: appColors.muted,
         style: IconButton.styleFrom(
           fixedSize: const Size(30, 30),
           minimumSize: const Size(30, 30),
@@ -8146,9 +8031,9 @@ class _BubbleSurface extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
-          color: message.isMe ? _bubbleMe : _surface,
+          color: message.isMe ? appColors.bubbleMe : appColors.surface,
           border: Border.all(
-            color: message.isMe ? const Color(0xFFECD9CD) : _line,
+            color: message.isMe ? const Color(0xFFECD9CD) : appColors.line,
           ),
           borderRadius: BorderRadius.circular(8),
           boxShadow: const [
@@ -8185,7 +8070,7 @@ class MessageStatusIcon extends StatelessWidget {
         const Color(0xFFB7B1A5),
         '发送中',
       ),
-      MessageSendStatus.sent => (Icons.done_all_rounded, _accent, '已发送'),
+      MessageSendStatus.sent => (Icons.done_all_rounded, appColors.accent, '已发送'),
       MessageSendStatus.failed => (
         Icons.error_outline_rounded,
         const Color(0xFFC85D4D),
@@ -8260,7 +8145,7 @@ class MessageStatusPill extends StatelessWidget {
         const Color(0xFFB7B1A5),
         '发送中',
       ),
-      MessageSendStatus.sent => (Icons.done_all_rounded, _accent, '已发送'),
+      MessageSendStatus.sent => (Icons.done_all_rounded, appColors.accent, '已发送'),
       MessageSendStatus.failed => (
         Icons.error_outline_rounded,
         const Color(0xFFC85D4D),
@@ -8321,7 +8206,7 @@ class MessageContent extends StatelessWidget {
     if (attachment == null) {
       return SelectableText(
         message.text,
-        style: TextStyle(color: _text, fontSize: 14, height: 1.55),
+        style: TextStyle(color: appColors.text, fontSize: 14, height: 1.55),
       );
     }
 
@@ -8347,7 +8232,7 @@ class MessageContent extends StatelessWidget {
         if (message.text.trim().isNotEmpty) ...[
           SelectableText(
             message.text,
-            style: TextStyle(color: _text, fontSize: 14, height: 1.55),
+            style: TextStyle(color: appColors.text, fontSize: 14, height: 1.55),
           ),
           const SizedBox(height: 10),
         ],
@@ -8504,8 +8389,8 @@ class AttachmentTile extends StatelessWidget {
       width: 260,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: _surface,
-        border: Border.all(color: _line),
+        color: appColors.surface,
+        border: Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -8514,10 +8399,10 @@ class AttachmentTile extends StatelessWidget {
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: _accentSoft,
+              color: appColors.accentSoft,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(attachment.icon, color: _accent, size: 22),
+            child: Icon(attachment.icon, color: appColors.accent, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -8529,7 +8414,7 @@ class AttachmentTile extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -8537,7 +8422,7 @@ class AttachmentTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   attachment.sizeLabel,
-                  style: TextStyle(color: _muted, fontSize: 12),
+                  style: TextStyle(color: appColors.muted, fontSize: 12),
                 ),
               ],
             ),
@@ -8558,9 +8443,9 @@ class FileCard extends StatelessWidget {
     return ShadCard(
       width: 240,
       padding: const EdgeInsets.all(12),
-      backgroundColor: _surface,
+      backgroundColor: appColors.surface,
       radius: BorderRadius.circular(8),
-      border: ShadBorder.all(color: _line, width: 1),
+      border: ShadBorder.all(color: appColors.line, width: 1),
       shadows: const [],
       child: Row(
         children: [
@@ -8568,10 +8453,10 @@ class FileCard extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: _accentSoft,
+              color: appColors.accentSoft,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: Icon(file.icon, color: _accent, size: 22),
+            child: Icon(file.icon, color: appColors.accent, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -8583,18 +8468,18 @@ class FileCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: _text,
+                    color: appColors.text,
                     fontWeight: FontWeight.w700,
                     fontSize: 13,
                   ),
                 ),
                 const SizedBox(height: 5),
-                Text(file.size, style: TextStyle(color: _muted, fontSize: 12)),
+                Text(file.size, style: TextStyle(color: appColors.muted, fontSize: 12)),
                 const SizedBox(height: 8),
                 StableProgressBar(
                   value: file.progress / 100,
                   height: 5,
-                  color: _accent,
+                  color: appColors.accent,
                   backgroundColor: const Color(0xFFEFECE3),
                 ),
               ],
@@ -8603,7 +8488,7 @@ class FileCard extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             '${file.progress}%',
-            style: TextStyle(color: _muted, fontSize: 12),
+            style: TextStyle(color: appColors.muted, fontSize: 12),
           ),
         ],
       ),
@@ -8640,8 +8525,8 @@ class Composer extends StatelessWidget {
       },
       child: Container(
         decoration: BoxDecoration(
-          color: _surface,
-          border: Border(top: BorderSide(color: _line)),
+          color: appColors.surface,
+          border: Border(top: BorderSide(color: appColors.line)),
         ),
         child: Column(
           children: [
@@ -8705,7 +8590,7 @@ class Composer extends StatelessWidget {
                         ),
                       ),
                       style: TextStyle(
-                        color: _text,
+                        color: appColors.text,
                         fontSize: 14,
                         height: 1.55,
                       ),
@@ -8719,10 +8604,10 @@ class Composer extends StatelessWidget {
                       onPressed: onSend,
                       height: 38,
                       padding: const EdgeInsets.symmetric(horizontal: 18),
-                      backgroundColor: _accent,
+                      backgroundColor: appColors.accent,
                       hoverBackgroundColor: Color.alphaBlend(
                         Colors.black.withValues(alpha: 0.08),
-                        _accent,
+                        appColors.accent,
                       ),
                       foregroundColor: Colors.white,
                       hoverForegroundColor: Colors.white,
@@ -8761,7 +8646,7 @@ class _ComposerButton extends StatelessWidget {
         child: IconButton(
           onPressed: onPressed ?? () {},
           icon: Icon(icon, size: 20),
-          color: _muted,
+          color: appColors.muted,
           style: IconButton.styleFrom(
             fixedSize: const Size(36, 36),
             shape: RoundedRectangleBorder(
@@ -8830,7 +8715,7 @@ class PendingAttachmentTile extends StatelessWidget {
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: const Color(0xFFF8F6F0),
-                border: Border.all(color: _line),
+                border: Border.all(color: appColors.line),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: ClipRRect(
@@ -8901,7 +8786,7 @@ class _PendingFilePreview extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(attachment.icon, color: _accent, size: 26),
+          Icon(attachment.icon, color: appColors.accent, size: 26),
           const SizedBox(height: 8),
           Text(
             attachment.name,
@@ -8909,7 +8794,7 @@ class _PendingFilePreview extends StatelessWidget {
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: _text,
+              color: appColors.text,
               fontSize: 12,
               fontWeight: FontWeight.w700,
             ),
