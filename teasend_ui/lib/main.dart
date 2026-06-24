@@ -55,11 +55,15 @@ part 'ui/dialogs.dart';
 part 'ui/sidebar.dart';
 part 'pages/theme_page.dart';
 part 'pages/settings_page.dart';
+part 'pages/firewall_repair_card.dart';
+part 'pages/temp_file_cleanup_widget.dart';
 part 'pages/transfers_page.dart';
 part 'pages/history_page.dart';
 part 'pages/conversations.dart';
+part 'pages/chat_panel.dart';
 part 'pages/device_details_page.dart';
 part 'widgets/message_widgets.dart';
+part 'widgets/attachment_widgets.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
