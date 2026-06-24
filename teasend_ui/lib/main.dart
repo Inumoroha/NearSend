@@ -360,6 +360,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   final _conversationStore = ConversationStore();
   TempFileCleanupService? _tempCleanup;
   List<ReceiveHistoryEntry> _receiveHistory = [];
+  // IDs of history entries whose file no longer exists on disk. Recomputed
+  // asynchronously after the history changes; not persisted.
+  Set<String> _staleHistoryIds = {};
   final Set<String> _clipboardAutoSendFingerprints = {};
   final Set<String> _favoriteDeviceFingerprints = {};
   Timer? _clipboardPollTimer;
@@ -1424,6 +1427,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     setState(() {
       _receiveHistory = entries;
     });
+    unawaited(_refreshHistoryFileStatus());
   }
 
   Future<void> _recordReceiveHistory(
@@ -1454,6 +1458,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _receiveHistory = [entry, ..._receiveHistory];
     });
     unawaited(_historyStore.persist(_receiveHistory));
+    unawaited(_refreshHistoryFileStatus());
   }
 
   Future<void> _openHistoryFile(ReceiveHistoryEntry entry) async {
@@ -1492,6 +1497,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _receiveHistory = _receiveHistory
           .where((item) => item.id != entry.id)
           .toList();
+      _staleHistoryIds = _staleHistoryIds
+          .where((id) => id != entry.id)
+          .toSet();
     });
     unawaited(_historyStore.persist(_receiveHistory));
 
@@ -1511,6 +1519,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final removed = _receiveHistory;
     setState(() {
       _receiveHistory = [];
+      _staleHistoryIds = {};
     });
     unawaited(_historyStore.persist(_receiveHistory));
 
@@ -1519,6 +1528,69 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         await _deleteFileQuietly(entry.path);
       }
     }
+  }
+
+  /// Re-checks which history entries point at files that no longer exist and
+  /// updates [_staleHistoryIds]. Runs file I/O off the build path; the result is
+  /// pruned to ids still present in the (possibly changed) current list.
+  Future<void> _refreshHistoryFileStatus() async {
+    final snapshot = List<ReceiveHistoryEntry>.from(_receiveHistory);
+    final stale = <String>{};
+    for (final entry in snapshot) {
+      if (entry.path.trim().isEmpty || !await File(entry.path).exists()) {
+        stale.add(entry.id);
+      }
+    }
+    if (!mounted) return;
+    final liveIds = _receiveHistory.map((entry) => entry.id).toSet();
+    setState(() {
+      _staleHistoryIds = stale.where(liveIds.contains).toSet();
+    });
+  }
+
+  /// Removes history records whose files are gone. Does not touch the disk
+  /// (the files are already missing), so no "also delete file" option is shown.
+  Future<void> _cleanupStaleHistory() async {
+    final staleIds = _staleHistoryIds;
+    final count = _receiveHistory
+        .where((entry) => staleIds.contains(entry.id))
+        .length;
+    if (count == 0) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return TeaDialog(
+          title: const Text('清理失效记录'),
+          icon: Icons.cleaning_services_rounded,
+          width: 380,
+          content: Text(
+            '移除 $count 条文件已不存在的记录（不影响磁盘上的文件）。',
+            style: TextStyle(color: _text, fontSize: 14, height: 1.5),
+          ),
+          actions: [
+            TeaDialogButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              label: '取消',
+            ),
+            TeaDialogButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              label: '清理',
+              filled: true,
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _receiveHistory = _receiveHistory
+          .where((entry) => !staleIds.contains(entry.id))
+          .toList();
+      _staleHistoryIds = {};
+    });
+    unawaited(_historyStore.persist(_receiveHistory));
   }
 
   Future<void> _deleteFileQuietly(String path) async {
@@ -2857,10 +2929,12 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 Expanded(
                   child: HistoryPage(
                     entries: _receiveHistory,
+                    staleIds: _staleHistoryIds,
                     onOpenFile: _openHistoryFile,
                     onOpenFolder: _openHistoryFolder,
                     onDelete: _deleteHistoryEntry,
                     onClear: _clearReceiveHistory,
+                    onCleanupStale: _cleanupStaleHistory,
                     onMenu: showDrawer ? _openNavDrawer : null,
                   ),
                 )
@@ -5560,26 +5634,90 @@ String _statusLabel(TransferTaskStatus status) {
   };
 }
 
-class HistoryPage extends StatelessWidget {
+class HistoryPage extends StatefulWidget {
   const HistoryPage({
     super.key,
     required this.entries,
+    required this.staleIds,
     required this.onOpenFile,
     required this.onOpenFolder,
     required this.onDelete,
     required this.onClear,
+    required this.onCleanupStale,
     this.onMenu,
   });
 
   final List<ReceiveHistoryEntry> entries;
+
+  /// IDs of entries whose backing file is missing from disk.
+  final Set<String> staleIds;
   final ValueChanged<ReceiveHistoryEntry> onOpenFile;
   final ValueChanged<ReceiveHistoryEntry> onOpenFolder;
   final ValueChanged<ReceiveHistoryEntry> onDelete;
   final VoidCallback onClear;
+  final VoidCallback onCleanupStale;
   final VoidCallback? onMenu;
 
   @override
+  State<HistoryPage> createState() => _HistoryPageState();
+}
+
+class _HistoryPageState extends State<HistoryPage> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Entries matching the current search query (file name or sender).
+  List<ReceiveHistoryEntry> get _filtered {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return widget.entries;
+    return widget.entries.where((entry) {
+      return entry.fileName.toLowerCase().contains(query) ||
+          entry.senderAlias.toLowerCase().contains(query);
+    }).toList();
+  }
+
+  /// Flattens [entries] into an alternating list of section headers (String)
+  /// and entries, preserving the source's newest-first ordering.
+  List<Object> _buildRows(List<ReceiveHistoryEntry> entries) {
+    final rows = <Object>[];
+    String? bucket;
+    for (final entry in entries) {
+      final label = _bucketLabel(entry.receivedAt);
+      if (label != bucket) {
+        bucket = label;
+        rows.add(label);
+      }
+      rows.add(entry);
+    }
+    return rows;
+  }
+
+  String _bucketLabel(DateTime time) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(time.year, time.month, time.day);
+    final diffDays = today.difference(day).inDays;
+    if (diffDays <= 0) return '今天';
+    if (diffDays == 1) return '昨天';
+    if (diffDays < 7) return '本周';
+    return '更早';
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final hasEntries = widget.entries.isNotEmpty;
+    final filtered = _filtered;
+    final rows = _buildRows(filtered);
+    final staleCount = widget.entries
+        .where((entry) => widget.staleIds.contains(entry.id))
+        .length;
+
     return Container(
       color: _chatBg,
       child: Column(
@@ -5594,8 +5732,8 @@ class HistoryPage extends StatelessWidget {
             ),
             child: Row(
               children: [
-                if (onMenu != null) ...[
-                  _PageMenuButton(onPressed: onMenu!),
+                if (widget.onMenu != null) ...[
+                  _PageMenuButton(onPressed: widget.onMenu!),
                   const SizedBox(width: 8),
                 ],
                 Text(
@@ -5608,13 +5746,23 @@ class HistoryPage extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Text(
-                  entries.isEmpty ? '' : '${entries.length} 条',
+                  hasEntries ? '${widget.entries.length} 条' : '',
                   style: TextStyle(color: _muted, fontSize: 13),
                 ),
                 const Spacer(),
-                if (entries.isNotEmpty)
+                if (staleCount > 0)
                   TextButton.icon(
-                    onPressed: onClear,
+                    onPressed: widget.onCleanupStale,
+                    icon: const Icon(
+                      Icons.cleaning_services_rounded,
+                      size: 17,
+                    ),
+                    label: Text('清理失效 ($staleCount)'),
+                    style: TextButton.styleFrom(foregroundColor: _muted),
+                  ),
+                if (hasEntries)
+                  TextButton.icon(
+                    onPressed: widget.onClear,
                     icon: const Icon(Icons.delete_sweep_rounded, size: 18),
                     label: const Text('清空'),
                     style: TextButton.styleFrom(foregroundColor: _muted),
@@ -5622,39 +5770,133 @@ class HistoryPage extends StatelessWidget {
               ],
             ),
           ),
+          if (hasEntries)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 14, 28, 0),
+              child: _HistorySearchField(
+                controller: _searchController,
+                onChanged: (value) => setState(() => _query = value),
+                onClear: () => setState(() {
+                  _searchController.clear();
+                  _query = '';
+                }),
+              ),
+            ),
           Expanded(
-            child: entries.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.inbox_rounded,
-                          size: 46,
-                          color: _muted.withValues(alpha: 0.5),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          '暂无接收记录',
-                          style: TextStyle(color: _muted, fontSize: 14),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(32, 24, 32, 32),
-                    itemCount: entries.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 10),
+            child: !hasEntries
+                ? _emptyState('暂无接收记录')
+                : rows.isEmpty
+                ? _emptyState('未找到匹配的记录')
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(32, 16, 32, 32),
+                    itemCount: rows.length,
                     itemBuilder: (context, index) {
-                      final entry = entries[index];
-                      return _HistoryTile(
-                        entry: entry,
-                        onOpenFile: () => onOpenFile(entry),
-                        onOpenFolder: () => onOpenFolder(entry),
-                        onDelete: () => onDelete(entry),
+                      final row = rows[index];
+                      if (row is String) {
+                        return Padding(
+                          padding: EdgeInsets.only(
+                            top: index == 0 ? 6 : 18,
+                            bottom: 8,
+                          ),
+                          child: Text(
+                            row,
+                            style: TextStyle(
+                              color: _muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        );
+                      }
+                      final entry = row as ReceiveHistoryEntry;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _HistoryTile(
+                          entry: entry,
+                          stale: widget.staleIds.contains(entry.id),
+                          onOpenFile: () => widget.onOpenFile(entry),
+                          onOpenFolder: () => widget.onOpenFolder(entry),
+                          onDelete: () => widget.onDelete(entry),
+                        ),
                       );
                     },
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState(String label) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.inbox_rounded,
+            size: 46,
+            color: _muted.withValues(alpha: 0.5),
+          ),
+          const SizedBox(height: 12),
+          Text(label, style: TextStyle(color: _muted, fontSize: 14)),
+        ],
+      ),
+    );
+  }
+}
+
+class _HistorySearchField extends StatelessWidget {
+  const _HistorySearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: _surface,
+        border: Border.all(color: _line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search_rounded, size: 18, color: _muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              onChanged: onChanged,
+              style: TextStyle(color: _text, fontSize: 14),
+              cursorColor: _accent,
+              decoration: InputDecoration(
+                isCollapsed: true,
+                border: InputBorder.none,
+                hintText: '搜索文件名或发送方',
+                hintStyle: TextStyle(color: _muted, fontSize: 14),
+              ),
+            ),
+          ),
+          ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) {
+              if (value.text.isEmpty) return const SizedBox.shrink();
+              return InkWell(
+                onTap: onClear,
+                borderRadius: BorderRadius.circular(999),
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Icon(Icons.close_rounded, size: 16, color: _muted),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -5668,12 +5910,17 @@ class _HistoryTile extends StatelessWidget {
     required this.onOpenFile,
     required this.onOpenFolder,
     required this.onDelete,
+    this.stale = false,
   });
 
   final ReceiveHistoryEntry entry;
   final VoidCallback onOpenFile;
   final VoidCallback onOpenFolder;
   final VoidCallback onDelete;
+
+  /// Whether the backing file is missing from disk; dims the tile and swaps the
+  /// status badge for a "失效" marker.
+  final bool stale;
 
   @override
   Widget build(BuildContext context) {
@@ -5688,14 +5935,17 @@ class _HistoryTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: _accentSoft,
-                borderRadius: BorderRadius.circular(8),
+            Opacity(
+              opacity: stale ? 0.45 : 1,
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _accentSoft,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(kind.icon, color: _accent, size: 22),
               ),
-              child: Icon(kind.icon, color: _accent, size: 22),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -5707,7 +5957,7 @@ class _HistoryTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: _text,
+                      color: stale ? _muted : _text,
                       fontWeight: FontWeight.w700,
                       fontSize: 14,
                     ),
@@ -5724,7 +5974,7 @@ class _HistoryTile extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      _HistoryBadge(autoSaved: entry.autoSaved),
+                      _HistoryBadge(autoSaved: entry.autoSaved, stale: stale),
                     ],
                   ),
                 ],
@@ -5781,14 +6031,17 @@ class _HistoryTile extends StatelessWidget {
 }
 
 class _HistoryBadge extends StatelessWidget {
-  const _HistoryBadge({required this.autoSaved});
+  const _HistoryBadge({required this.autoSaved, this.stale = false});
 
   final bool autoSaved;
+  final bool stale;
 
   @override
   Widget build(BuildContext context) {
-    final label = autoSaved ? '已保存' : '临时';
-    final color = autoSaved ? _accent : _muted;
+    final label = stale ? '已失效' : (autoSaved ? '已保存' : '临时');
+    final color = stale
+        ? const Color(0xFFC85D4D)
+        : (autoSaved ? _accent : _muted);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
