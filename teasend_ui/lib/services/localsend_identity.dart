@@ -1,20 +1,29 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'android_platform.dart';
+import 'localsend_security.dart';
 
 class LocalSendIdentity {
   LocalSendIdentity({
     this.alias = 'NearSend',
     this.port = defaultPort,
-    this.protocol = 'http',
+    this.protocol = 'https',
     this.deviceModel = 'Unknown',
     this.deviceType = 'desktop',
-  }) : fingerprint = 'nearsend-${DateTime.now().millisecondsSinceEpoch}';
+    LocalSendSecurityContext? securityContext,
+  }) {
+    _securityContext = securityContext;
+    fingerprint =
+        securityContext?.certificateHash ??
+        'nearsend-${DateTime.now().millisecondsSinceEpoch}';
+  }
 
   static const defaultPort = 53317;
   static const protocolVersion = '2.1';
+  static const _securityContextPreferenceKey = 'device_security_context';
   static const _fingerprintPreferenceKey = 'device_fingerprint';
   static const _aliasPreferenceKey = 'device_alias';
 
@@ -31,25 +40,60 @@ class LocalSendIdentity {
   String deviceType;
 
   /// Stable per-install identifier advertised to peers. Generated fresh on
-  /// first launch, then overwritten with the persisted value on startup (see
-  /// [LocalSendIdentity.restorePersistentFingerprint]) so the same physical
-  /// device keeps one identity across restarts instead of appearing as a new
-  /// device each time.
-  String fingerprint;
+  /// first launch, then overwritten with the persisted certificate hash on
+  /// startup (see [LocalSendIdentity.restorePersistentFingerprint]) so the
+  /// same physical device keeps one identity across restarts.
+  late String fingerprint;
+
+  LocalSendSecurityContext? _securityContext;
+
+  LocalSendSecurityContext get securityContext {
+    final context = _securityContext;
+    if (context != null) return context;
+    final generated = generateLocalSendSecurityContext();
+    _applySecurityContext(generated);
+    return generated;
+  }
 
   bool get https => protocol == 'https';
 
-  /// Loads the persisted fingerprint, or persists the freshly-generated one on
-  /// first launch. Must be awaited before discovery starts so the device keeps
-  /// a stable identity across restarts.
+  /// Loads the persisted certificate identity, or creates one on first launch.
+  /// The method name is kept for existing callers/tests; for HTTPS the device
+  /// fingerprint is the SHA-256 hash of the self-signed certificate.
   Future<void> restorePersistentFingerprint() async {
     final preferences = await SharedPreferences.getInstance();
-    final saved = preferences.getString(_fingerprintPreferenceKey);
-    if (saved != null && saved.isNotEmpty) {
-      fingerprint = saved;
-    } else {
-      await preferences.setString(_fingerprintPreferenceKey, fingerprint);
+    final restored = _restoreSecurityContext(preferences);
+    if (restored != null) {
+      _applySecurityContext(restored);
+      return;
     }
+
+    final generated = generateLocalSendSecurityContext();
+    _applySecurityContext(generated);
+    await preferences.setString(
+      _securityContextPreferenceKey,
+      jsonEncode(generated.toJson()),
+    );
+    await preferences.setString(_fingerprintPreferenceKey, fingerprint);
+  }
+
+  LocalSendSecurityContext? _restoreSecurityContext(
+    SharedPreferences preferences,
+  ) {
+    final raw = preferences.getString(_securityContextPreferenceKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      return LocalSendSecurityContext.fromJson(decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _applySecurityContext(LocalSendSecurityContext context) {
+    _securityContext = context;
+    fingerprint = context.certificateHash;
   }
 
   /// Resolves the platform-appropriate device type/model and the advertised
@@ -67,7 +111,9 @@ class LocalSendIdentity {
 
     final preferences = await SharedPreferences.getInstance();
     final saved = preferences.getString(_aliasPreferenceKey);
-    alias = (saved != null && saved.trim().isNotEmpty) ? saved.trim() : deviceName;
+    alias = (saved != null && saved.trim().isNotEmpty)
+        ? saved.trim()
+        : deviceName;
   }
 
   /// Persists a user-chosen [alias] and applies it immediately. Callers should

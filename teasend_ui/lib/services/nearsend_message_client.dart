@@ -5,6 +5,7 @@ import '../models/discovered_device.dart';
 import '../models/nearsend_message.dart';
 import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
+import 'localsend_security.dart';
 
 class NearSendMessageClient {
   NearSendMessageClient({required this.identity, required this.boundPort});
@@ -46,13 +47,16 @@ class NearSendMessageClient {
   }) async {
     Object? lastError;
     for (final port in _candidatePorts(target.port)) {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(milliseconds: 1200);
+      final client = createLocalSendHttpClient(
+        trustedFingerprint: target.https ? target.fingerprint : null,
+        connectionTimeout: const Duration(milliseconds: 1200),
+      );
       try {
-        final request = await client.postUrl(_messageUri(target, port));
+        final uri = _messageUri(target, port);
+        final request = await client.postUrl(uri);
         request.headers.contentType = ContentType.json;
         request.write(jsonEncode(body));
-        await _expectOk(request);
+        await _expectOk(request, uri, target);
         return;
       } catch (error) {
         lastError = error;
@@ -78,8 +82,17 @@ class NearSendMessageClient {
     );
   }
 
-  Future<void> _expectOk(HttpClientRequest request) async {
+  Future<void> _expectOk(
+    HttpClientRequest request,
+    Uri uri,
+    DiscoveredDevice target,
+  ) async {
     final response = await request.close().timeout(const Duration(seconds: 10));
+    ensureResponseCertificateMatches(
+      uri: uri,
+      expectedFingerprint: target.https ? target.fingerprint : null,
+      response: response,
+    );
     await response.drain<void>();
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw HttpException('NearSend message failed: ${response.statusCode}');

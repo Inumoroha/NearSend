@@ -101,6 +101,14 @@ class LocalSendDiscoveryServer {
     ];
     for (final port in candidates) {
       try {
+        if (identity.https) {
+          return await HttpServer.bindSecure(
+            InternetAddress.anyIPv4,
+            port,
+            identity.securityContext.toServerSecurityContext(),
+            shared: true,
+          );
+        }
         return await HttpServer.bind(
           InternetAddress.anyIPv4,
           port,

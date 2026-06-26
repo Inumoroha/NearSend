@@ -7,6 +7,7 @@ import '../models/nearsend_message.dart';
 import 'localsend_file_transfer.dart';
 import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
+import 'localsend_security.dart';
 
 class LanDiscoveryService {
   LanDiscoveryService({
@@ -322,6 +323,8 @@ class LanDiscoveryService {
   Future<void> _probeHost(String host) async {
     for (final port in _probePorts()) {
       for (final attempt in const [
+        _ProbeAttempt('https', '/api/localsend/v2/info'),
+        _ProbeAttempt('https', '/api/localsend/v1/info'),
         _ProbeAttempt('http', '/api/localsend/v2/info'),
         _ProbeAttempt('http', '/api/localsend/v1/info'),
       ]) {
@@ -341,19 +344,20 @@ class LanDiscoveryService {
     int port,
     _ProbeAttempt attempt,
   ) async {
-    final client = HttpClient()..connectionTimeout = _probeConnectionTimeout;
-    client.badCertificateCallback = (_, _, _) => true;
+    final client = createLocalSendHttpClient(
+      trustedFingerprint: null,
+      connectionTimeout: _probeConnectionTimeout,
+    );
 
     try {
-      final request = await client.getUrl(
-        Uri(
-          scheme: attempt.scheme,
-          host: host,
-          port: port,
-          path: attempt.path,
-          queryParameters: {'fingerprint': identity.fingerprint},
-        ),
+      final uri = Uri(
+        scheme: attempt.scheme,
+        host: host,
+        port: port,
+        path: attempt.path,
+        queryParameters: {'fingerprint': identity.fingerprint},
       );
+      final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       final response = await request.close().timeout(_probeResponseTimeout);
       final body = await utf8
@@ -365,12 +369,19 @@ class LanDiscoveryService {
 
       final decoded = jsonDecode(body);
       if (decoded is! Map<String, dynamic>) return null;
-      return DiscoveredDevice.fromLocalSendJson(
+      final device = DiscoveredDevice.fromLocalSendJson(
         decoded,
         host,
         fallbackPort: port,
         fallbackHttps: attempt.scheme == 'https',
       );
+      if (device == null) return null;
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: device.https ? device.fingerprint : null,
+        response: response,
+      );
+      return device;
     } catch (_) {
       return null;
     } finally {
@@ -499,12 +510,38 @@ class LanDiscoveryService {
         fallbackHttps: identity.https,
       );
       if (device == null || device.fingerprint == identity.fingerprint) return;
+      if (device.https) {
+        unawaited(_verifyAnnouncedDevice(device, decoded));
+        return;
+      }
       _deviceController.add(device);
       if (decoded['announcement'] == true || decoded['announce'] == true) {
         unawaited(_answerAnnouncement(device));
       }
     } catch (_) {
       // Ignore non-LocalSend multicast traffic.
+    }
+  }
+
+  Future<void> _verifyAnnouncedDevice(
+    DiscoveredDevice device,
+    Map<String, dynamic> announcement,
+  ) async {
+    final verified = await _tryProbeInfo(
+      device.ip,
+      device.port,
+      _ProbeAttempt(
+        'https',
+        device.version == '1.0'
+            ? '/api/localsend/v1/info'
+            : '/api/localsend/v2/info',
+      ),
+    );
+    if (verified == null || verified.fingerprint != device.fingerprint) return;
+    _deviceController.add(verified);
+    if (announcement['announcement'] == true ||
+        announcement['announce'] == true) {
+      unawaited(_answerAnnouncement(verified));
     }
   }
 
@@ -517,23 +554,29 @@ class LanDiscoveryService {
   }
 
   Future<bool> _postRegister(DiscoveredDevice peer) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
-    client.badCertificateCallback = (_, _, _) => true;
+    final client = createLocalSendHttpClient(
+      trustedFingerprint: peer.https ? peer.fingerprint : null,
+      connectionTimeout: const Duration(seconds: 1),
+    );
     try {
-      final request = await client.postUrl(
-        Uri(
-          scheme: peer.https ? 'https' : 'http',
-          host: peer.ip,
-          port: peer.port,
-          path: peer.version == '1.0'
-              ? '/api/localsend/v1/register'
-              : '/api/localsend/v2/register',
-        ),
+      final uri = Uri(
+        scheme: peer.https ? 'https' : 'http',
+        host: peer.ip,
+        port: peer.port,
+        path: peer.version == '1.0'
+            ? '/api/localsend/v1/register'
+            : '/api/localsend/v2/register',
       );
+      final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(_registerMessage()));
       final response = await request.close().timeout(
         const Duration(seconds: 2),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: peer.https ? peer.fingerprint : null,
+        response: response,
       );
       await response.drain<void>();
       return response.statusCode >= 200 && response.statusCode < 300;

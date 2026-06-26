@@ -9,6 +9,7 @@ import '../models/discovered_device.dart';
 import '../models/nearsend_message.dart';
 import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
+import 'localsend_security.dart';
 
 /// Thrown when an in-flight upload is aborted via [TransferHandle.cancel].
 class TransferCancelledException implements Exception {
@@ -369,22 +370,32 @@ class LocalSendFileTransferService {
     final target = handle.target;
     final sessionId = handle.sessionId;
     if (target == null || sessionId == null) return;
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 3);
+    final client = _httpClientForTarget(
+      target,
+      timeout: const Duration(seconds: 3),
+    );
     try {
-      final request = await client.postUrl(
-        Uri(
-          scheme: target.https ? 'https' : 'http',
-          host: target.ip,
-          port: target.port,
-          path: target.version == '1.0'
-              ? '/api/localsend/v1/cancel'
-              : '/api/localsend/v2/cancel',
-          queryParameters: target.version == '1.0'
-              ? null
-              : {'sessionId': sessionId},
-        ),
+      final uri = Uri(
+        scheme: target.https ? 'https' : 'http',
+        host: target.ip,
+        port: target.port,
+        path: target.version == '1.0'
+            ? '/api/localsend/v1/cancel'
+            : '/api/localsend/v2/cancel',
+        queryParameters: target.version == '1.0'
+            ? null
+            : {'sessionId': sessionId},
       );
-      await request.close().timeout(const Duration(seconds: 4));
+      final request = await client.postUrl(uri);
+      final response = await request.close().timeout(
+        const Duration(seconds: 4),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: target.https ? target.fingerprint : null,
+        response: response,
+      );
+      await response.drain<void>();
     } catch (_) {
       // Best-effort notification; the local connection is already closed.
     } finally {
@@ -396,18 +407,20 @@ class LocalSendFileTransferService {
     required DiscoveredDevice target,
     required List<_OutgoingFile> files,
   }) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    final client = _httpClientForTarget(
+      target,
+      timeout: const Duration(seconds: 4),
+    );
     try {
-      final request = await client.postUrl(
-        Uri(
-          scheme: target.https ? 'https' : 'http',
-          host: target.ip,
-          port: target.port,
-          path: target.version == '1.0'
-              ? '/api/localsend/v1/send-request'
-              : '/api/localsend/v2/prepare-upload',
-        ),
+      final uri = Uri(
+        scheme: target.https ? 'https' : 'http',
+        host: target.ip,
+        port: target.port,
+        path: target.version == '1.0'
+            ? '/api/localsend/v1/send-request'
+            : '/api/localsend/v2/prepare-upload',
       );
+      final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.json;
       request.write(
         jsonEncode({
@@ -426,6 +439,11 @@ class LocalSendFileTransferService {
 
       final response = await request.close().timeout(
         const Duration(seconds: 30),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: target.https ? target.fingerprint : null,
+        response: response,
       );
       final body = await utf8.decodeStream(response);
       if (response.statusCode == HttpStatus.noContent) {
@@ -476,6 +494,16 @@ class LocalSendFileTransferService {
     return {preferredPort, ...LocalSendDiscoveryServer.fallbackPorts};
   }
 
+  HttpClient _httpClientForTarget(
+    DiscoveredDevice target, {
+    required Duration timeout,
+  }) {
+    return createLocalSendHttpClient(
+      trustedFingerprint: target.https ? target.fingerprint : null,
+      connectionTimeout: timeout,
+    );
+  }
+
   Future<void> _upload({
     required DiscoveredDevice target,
     required String path,
@@ -486,7 +514,10 @@ class LocalSendFileTransferService {
     TransferHandle? handle,
   }) async {
     final file = File(path);
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 4);
+    final client = _httpClientForTarget(
+      target,
+      timeout: const Duration(seconds: 4),
+    );
     handle?._bind(client);
     try {
       if (handle?.isCancelled ?? false) {
@@ -498,17 +529,16 @@ class LocalSendFileTransferService {
         'fileId': fileId,
         'token': token,
       };
-      final request = await client.postUrl(
-        Uri(
-          scheme: target.https ? 'https' : 'http',
-          host: target.ip,
-          port: target.port,
-          path: target.version == '1.0'
-              ? '/api/localsend/v1/send'
-              : '/api/localsend/v2/upload',
-          queryParameters: query,
-        ),
+      final uri = Uri(
+        scheme: target.https ? 'https' : 'http',
+        host: target.ip,
+        port: target.port,
+        path: target.version == '1.0'
+            ? '/api/localsend/v1/send'
+            : '/api/localsend/v2/upload',
+        queryParameters: query,
       );
+      final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.parse(_mimeFor(path));
       request.headers.contentLength = await file.length();
 
@@ -530,6 +560,11 @@ class LocalSendFileTransferService {
 
       final response = await request.close().timeout(
         const Duration(minutes: 5),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: target.https ? target.fingerprint : null,
+        response: response,
       );
       await response.drain<void>();
       if (response.statusCode < 200 || response.statusCode >= 300) {

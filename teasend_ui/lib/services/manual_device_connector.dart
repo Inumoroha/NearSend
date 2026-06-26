@@ -4,6 +4,7 @@ import 'dart:io';
 import '../models/discovered_device.dart';
 import 'localsend_discovery_server.dart';
 import 'localsend_identity.dart';
+import 'localsend_security.dart';
 
 class ManualDeviceConnector {
   ManualDeviceConnector({
@@ -57,10 +58,10 @@ class ManualDeviceConnector {
   }
 
   static const _attempts = [
-    _ManualConnectAttempt('http', '/api/localsend/v2/info'),
-    _ManualConnectAttempt('http', '/api/localsend/v1/info'),
     _ManualConnectAttempt('https', '/api/localsend/v2/info'),
     _ManualConnectAttempt('https', '/api/localsend/v1/info'),
+    _ManualConnectAttempt('http', '/api/localsend/v2/info'),
+    _ManualConnectAttempt('http', '/api/localsend/v1/info'),
   ];
 
   Future<DiscoveredDevice?> _tryInfo({
@@ -68,20 +69,20 @@ class ManualDeviceConnector {
     required int port,
     required _ManualConnectAttempt attempt,
   }) async {
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(milliseconds: 900);
-    client.badCertificateCallback = (_, _, _) => true;
+    final client = createLocalSendHttpClient(
+      trustedFingerprint: null,
+      connectionTimeout: const Duration(milliseconds: 900),
+    );
 
     try {
-      final request = await client.getUrl(
-        Uri(
-          scheme: attempt.scheme,
-          host: host,
-          port: port,
-          path: attempt.path,
-          queryParameters: {'fingerprint': identity.fingerprint},
-        ),
+      final uri = Uri(
+        scheme: attempt.scheme,
+        host: host,
+        port: port,
+        path: attempt.path,
+        queryParameters: {'fingerprint': identity.fingerprint},
       );
+      final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
 
       final response = await request.close().timeout(
@@ -96,12 +97,19 @@ class ManualDeviceConnector {
 
       final decoded = jsonDecode(body);
       if (decoded is! Map<String, dynamic>) return null;
-      return DiscoveredDevice.fromLocalSendJson(
+      final device = DiscoveredDevice.fromLocalSendJson(
         decoded,
         host,
         fallbackPort: port,
         fallbackHttps: attempt.scheme == 'https',
       );
+      if (device == null) return null;
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: device.https ? device.fingerprint : null,
+        response: response,
+      );
+      return device;
     } catch (_) {
       return null;
     } finally {
@@ -110,25 +118,31 @@ class ManualDeviceConnector {
   }
 
   Future<void> _registerSelf(DiscoveredDevice device, String infoPath) async {
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 2);
-    client.badCertificateCallback = (_, _, _) => true;
+    final client = createLocalSendHttpClient(
+      trustedFingerprint: device.https ? device.fingerprint : null,
+      connectionTimeout: const Duration(seconds: 2),
+    );
     final registerPath = infoPath.contains('/v1/')
         ? '/api/localsend/v1/register'
         : '/api/localsend/v2/register';
 
     try {
-      final request = await client.postUrl(
-        Uri(
-          scheme: device.https ? 'https' : 'http',
-          host: device.ip,
-          port: device.port,
-          path: registerPath,
-        ),
+      final uri = Uri(
+        scheme: device.https ? 'https' : 'http',
+        host: device.ip,
+        port: device.port,
+        path: registerPath,
       );
+      final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode(_registerMessage()));
       final response = await request.close().timeout(
         const Duration(seconds: 3),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: device.https ? device.fingerprint : null,
+        response: response,
       );
       await response.drain<void>();
     } catch (_) {

@@ -30,6 +30,7 @@ import 'services/conversation_store.dart';
 import 'services/lan_discovery_service.dart';
 import 'services/localsend_file_transfer.dart';
 import 'services/localsend_identity.dart';
+import 'services/localsend_security.dart';
 import 'services/manual_device_connector.dart';
 import 'services/native_window_service.dart';
 import 'services/nearsend_message_client.dart';
@@ -701,24 +702,33 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final running = await _ensureReceiveServiceStarted();
     if (!running) return;
     final port = _discoveryService.boundPort;
-    final client = HttpClient()..connectionTimeout = const Duration(seconds: 1);
+    final identity = _discoveryService.identity;
+    final client = createLocalSendHttpClient(
+      trustedFingerprint: identity.https ? identity.fingerprint : null,
+      connectionTimeout: const Duration(seconds: 1),
+    );
     try {
-      final request = await client.getUrl(
-        Uri(
-          scheme: 'http',
-          host: '127.0.0.1',
-          port: port,
-          path: '/api/localsend/v2/info',
-          queryParameters: {'fingerprint': 'nearsend-healthcheck'},
-        ),
+      final uri = Uri(
+        scheme: identity.https ? 'https' : 'http',
+        host: '127.0.0.1',
+        port: port,
+        path: '/api/localsend/v2/info',
+        queryParameters: {'fingerprint': 'nearsend-healthcheck'},
       );
+      final request = await client.getUrl(uri);
       final response = await request.close().timeout(
         const Duration(seconds: 2),
+      );
+      ensureResponseCertificateMatches(
+        uri: uri,
+        expectedFingerprint: identity.https ? identity.fingerprint : null,
+        response: response,
       );
       await response.drain<void>();
       if (!mounted) return;
       setState(() {
-        _localHttpStatus = '127.0.0.1:$port -> HTTP ${response.statusCode}';
+        final protocol = identity.https ? 'HTTPS' : 'HTTP';
+        _localHttpStatus = '127.0.0.1:$port -> $protocol ${response.statusCode}';
       });
     } catch (error) {
       if (!mounted) return;

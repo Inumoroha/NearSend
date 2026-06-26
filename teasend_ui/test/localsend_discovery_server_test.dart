@@ -14,6 +14,7 @@ void main() {
       final identity = LocalSendIdentity(
         alias: 'NearSend Test',
         port: preferredPort,
+        protocol: 'http',
       );
       final server = LocalSendDiscoveryServer(identity: identity);
 
@@ -29,7 +30,11 @@ void main() {
   );
 
   test('serves LocalSend v2 info and register endpoints', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(identity: identity);
     await server.start();
     final port = server.boundPort;
@@ -80,9 +85,39 @@ void main() {
       await server.dispose();
     }
   });
+  test('serves HTTPS info with certificate fingerprint identity', () async {
+    final identity = LocalSendIdentity(alias: 'NearSend TLS Test', port: 0);
+    final server = LocalSendDiscoveryServer(identity: identity);
+    await server.start();
+    final port = server.boundPort;
+
+    final client = HttpClient()
+      ..badCertificateCallback = (certificate, host, port) => true;
+    addTearDown(() => client.close(force: true));
+
+    try {
+      final request = await client.getUrl(
+        Uri.https('127.0.0.1:$port', '/api/localsend/v2/info'),
+      );
+      final response = await request.close();
+      final body = jsonDecode(await utf8.decodeStream(response));
+
+      expect(response.statusCode, HttpStatus.ok);
+      expect(response.certificate, isNotNull);
+      expect(body['alias'], 'NearSend TLS Test');
+      expect(body['fingerprint'], identity.fingerprint);
+      expect(body['protocol'], 'https');
+    } finally {
+      await server.dispose();
+    }
+  });
 
   test('receives NearSend text and attachment messages', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(identity: identity);
     await server.start();
     final port = server.boundPort;
@@ -172,7 +207,11 @@ void main() {
   });
 
   test('receives LocalSend v2 file upload', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(identity: identity);
     await server.start();
     final port = server.boundPort;
@@ -247,7 +286,11 @@ void main() {
   });
 
   test('receives multiple LocalSend v2 file uploads in one session', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(identity: identity);
     await server.start();
     final port = server.boundPort;
@@ -321,7 +364,11 @@ void main() {
   });
 
   test('LocalSend upload waits for receive confirmation', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(
       identity: identity,
       requireReceiveConfirmation: true,
@@ -383,7 +430,11 @@ void main() {
   });
 
   test('LocalSend upload can be declined before upload starts', () async {
-    final identity = LocalSendIdentity(alias: 'NearSend Test', port: 0);
+    final identity = LocalSendIdentity(
+      alias: 'NearSend Test',
+      port: 0,
+      protocol: 'http',
+    );
     final server = LocalSendDiscoveryServer(
       identity: identity,
       requireReceiveConfirmation: true,
