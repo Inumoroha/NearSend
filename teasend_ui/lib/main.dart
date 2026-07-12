@@ -300,6 +300,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   bool _messageSelectionMode = false;
   bool _showDeviceDetails = false;
   bool _autoSaveEnabled = false;
+  bool _autoSaveChangedWhileRestoring = false;
   bool _overwriteSameNameFiles = false;
   bool _minimizeToTrayEnabled = false;
   bool _showImageCopyButton = true;
@@ -548,7 +549,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     if (!mounted) return;
     setState(() {
       _minimizeToTrayEnabled = enabled;
-      _autoSaveEnabled = autoSaveEnabled;
+      if (!_autoSaveChangedWhileRestoring) {
+        _autoSaveEnabled = autoSaveEnabled;
+      }
       if (savedAutoSaveDirectory != null &&
           savedAutoSaveDirectory.trim().isNotEmpty) {
         _autoSaveDirectory = savedAutoSaveDirectory;
@@ -615,12 +618,14 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
   }
 
   Future<void> _setAutoSaveEnabled(bool enabled) async {
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setBool(_autoSaveEnabledPreferenceKey, enabled);
-    if (!mounted) return;
     setState(() {
       _autoSaveEnabled = enabled;
+      if (_restoringSettings) {
+        _autoSaveChangedWhileRestoring = true;
+      }
     });
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_autoSaveEnabledPreferenceKey, enabled);
   }
 
   Future<void> _setOverwriteSameNameFiles(bool enabled) async {
@@ -3209,4 +3214,3 @@ class _TransferRateTracker {
     return _rate;
   }
 }
-

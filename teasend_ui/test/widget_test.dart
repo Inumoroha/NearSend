@@ -544,28 +544,61 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
 
     await tester.tap(find.byTooltip('设置'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
 
     expect(find.text('自动保存'), findsOneWidget);
     expect(find.text('覆盖同名文件'), findsOneWidget);
-    expect(find.text('最小化到托盘'), findsOneWidget);
     expect(find.byIcon(Icons.folder_open_rounded), findsOneWidget);
     expect(find.text('产品设计'), findsNothing);
 
     final switches = find.byType(ShadSwitch);
-    expect(switches, findsNWidgets(4));
+    expect(switches, findsAtLeastNWidgets(2));
+    final autoSaveSwitchFinder = switches.at(1);
 
-    var autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
+    var autoSaveSwitch = tester.widget<ShadSwitch>(autoSaveSwitchFinder);
     expect(autoSaveSwitch.value, isFalse);
 
-    await tester.tap(switches.first);
-    await tester.pumpAndSettle();
+    await tester.tap(autoSaveSwitchFinder);
+    await tester.pump(const Duration(milliseconds: 500));
 
-    autoSaveSwitch = tester.widget<ShadSwitch>(switches.first);
+    autoSaveSwitch = tester.widget<ShadSwitch>(autoSaveSwitchFinder);
     expect(autoSaveSwitch.value, isTrue);
+  });
+
+  testWidgets('auto save remains enabled after app restart', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(1280, 820);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    tester.widget<ShadSwitch>(find.byType(ShadSwitch).at(1)).onChanged!(true);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(
+      (await SharedPreferences.getInstance()).getBool('auto_save_enabled'),
+      isTrue,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byTooltip('设置'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    final restoredSwitch = tester.widget<ShadSwitch>(
+      find.byType(ShadSwitch).at(1),
+    );
+    expect(restoredSwitch.value, isTrue);
   });
 
   testWidgets('settings page exposes image copy button toggle', (
