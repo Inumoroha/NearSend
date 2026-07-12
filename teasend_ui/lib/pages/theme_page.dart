@@ -18,14 +18,15 @@ class ThemePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     return Container(
       color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            height: 74,
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            height: isPhone ? 56 : 74,
+            padding: EdgeInsets.symmetric(horizontal: isPhone ? 16 : 28),
             decoration: BoxDecoration(
               color: appColors.surface,
               border: Border(bottom: BorderSide(color: appColors.line)),
@@ -50,7 +51,12 @@ class ThemePage extends StatelessWidget {
           ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 12 : 32,
+                isPhone ? 16 : 28,
+                isPhone ? 12 : 32,
+                isPhone ? 20 : 32,
+              ),
               children: [
                 DecoratedBox(
                   decoration: BoxDecoration(
@@ -216,7 +222,10 @@ class _ThemeSectionHeader extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(description, style: TextStyle(color: appColors.muted, fontSize: 13)),
+              Text(
+                description,
+                style: TextStyle(color: appColors.muted, fontSize: 13),
+              ),
             ],
           ),
         ),
@@ -263,4 +272,3 @@ class _ThemeColorSwatch extends StatelessWidget {
     );
   }
 }
-

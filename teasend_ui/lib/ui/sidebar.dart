@@ -97,146 +97,80 @@ class _Sidebar extends StatelessWidget {
   }
 }
 
-/// Phone navigation: the left rail is replaced by this slide-in drawer on
-/// narrow screens. Selecting an item switches section and closes the drawer.
-class _NavDrawer extends StatelessWidget {
-  const _NavDrawer({
+class _MobileNavigationBar extends StatelessWidget {
+  const _MobileNavigationBar({
     required this.activeSection,
-    required this.deviceAlias,
-    required this.onShowDeviceInfo,
     required this.onChats,
     required this.onTransfers,
-    required this.onTheme,
-    required this.onSettings,
     required this.onHistory,
+    required this.onSettings,
   });
 
   final _MainSection activeSection;
-  final String deviceAlias;
-  final VoidCallback onShowDeviceInfo;
   final VoidCallback onChats;
   final VoidCallback onTransfers;
-  final VoidCallback onTheme;
-  final VoidCallback onSettings;
   final VoidCallback onHistory;
+  final VoidCallback onSettings;
+
+  int get _selectedIndex => switch (activeSection) {
+    _MainSection.chats => 0,
+    _MainSection.transfers => 1,
+    _MainSection.history => 2,
+    _MainSection.settings || _MainSection.theme => 3,
+  };
 
   @override
   Widget build(BuildContext context) {
-    return Drawer(
-      backgroundColor: appColors.surface,
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: appColors.surface,
+        border: Border(top: BorderSide(color: appColors.line)),
+      ),
       child: SafeArea(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            InkWell(
-              onTap: () {
-                Navigator.of(context).pop();
-                onShowDeviceInfo();
-              },
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 24, 20, 18),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: appColors.accent,
-                      child: Text(
-                        deviceAlias.initials,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        deviceAlias,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: appColors.text,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    Icon(Icons.chevron_right_rounded, color: appColors.muted),
-                  ],
-                ),
-              ),
-            ),
-            Divider(height: 1, color: appColors.line),
-            _NavDrawerItem(
-              icon: Icons.chat_bubble_rounded,
+        top: false,
+        child: NavigationBar(
+          key: const ValueKey('mobile-bottom-navigation'),
+          height: 64,
+          selectedIndex: _selectedIndex,
+          backgroundColor: appColors.surface,
+          indicatorColor: appColors.accentSoft,
+          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+          onDestinationSelected: (index) {
+            switch (index) {
+              case 0:
+                onChats();
+              case 1:
+                onTransfers();
+              case 2:
+                onHistory();
+              case 3:
+                onSettings();
+            }
+          },
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.chat_bubble_outline_rounded),
+              selectedIcon: Icon(Icons.chat_bubble_rounded),
               label: '消息',
-              active: activeSection == _MainSection.chats,
-              onTap: () => _select(context, onChats),
             ),
-            _NavDrawerItem(
-              icon: Icons.sync_alt_rounded,
+            NavigationDestination(
+              icon: Icon(Icons.swap_horiz_rounded),
+              selectedIcon: Icon(Icons.sync_alt_rounded),
               label: '传输',
-              active: activeSection == _MainSection.transfers,
-              onTap: () => _select(context, onTransfers),
             ),
-            _NavDrawerItem(
-              icon: Icons.history_rounded,
-              label: '文件记录',
-              active: activeSection == _MainSection.history,
-              onTap: () => _select(context, onHistory),
+            NavigationDestination(
+              icon: Icon(Icons.history_outlined),
+              selectedIcon: Icon(Icons.history_rounded),
+              label: '记录',
             ),
-            _NavDrawerItem(
-              icon: Icons.palette_rounded,
-              label: '主题',
-              active: activeSection == _MainSection.theme,
-              onTap: () => _select(context, onTheme),
-            ),
-            _NavDrawerItem(
-              icon: Icons.settings_rounded,
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings_rounded),
               label: '设置',
-              active: activeSection == _MainSection.settings,
-              onTap: () => _select(context, onSettings),
             ),
           ],
         ),
       ),
     );
   }
-
-  void _select(BuildContext context, VoidCallback action) {
-    Navigator.of(context).pop();
-    action();
-  }
 }
-
-class _NavDrawerItem extends StatelessWidget {
-  const _NavDrawerItem({
-    required this.icon,
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      onTap: onTap,
-      leading: Icon(icon, color: active ? appColors.accent : appColors.muted),
-      title: Text(
-        label,
-        style: TextStyle(
-          color: active ? appColors.accent : appColors.text,
-          fontSize: 15,
-          fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-        ),
-      ),
-      selected: active,
-      selectedTileColor: appColors.accentSoft,
-    );
-  }
-}
-

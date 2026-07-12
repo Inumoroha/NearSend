@@ -70,23 +70,28 @@ class ChatPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final keyboardInset = Platform.isAndroid
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
+    final keyboardInset = isPhone || Platform.isAndroid
         ? MediaQuery.viewInsetsOf(context).bottom
         : 0.0;
     return Container(
-      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      margin: isPhone
+          ? EdgeInsets.zero
+          : const EdgeInsets.fromLTRB(0, 12, 12, 12),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: appColors.chatBg,
-        border: Border.all(color: appColors.line),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
+        border: isPhone ? null : Border.all(color: appColors.line),
+        borderRadius: isPhone ? BorderRadius.zero : BorderRadius.circular(8),
+        boxShadow: isPhone
+            ? const []
+            : const [
+                BoxShadow(
+                  color: Color(0x0A0F172A),
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
       ),
       child: Stack(
         children: [
@@ -136,10 +141,10 @@ class ChatPanel extends StatelessWidget {
                       child: ListView(
                         controller: scrollController,
                         padding: EdgeInsets.fromLTRB(
-                          24,
-                          24,
-                          24,
-                          24 + keyboardInset,
+                          isPhone ? 12 : 24,
+                          isPhone ? 16 : 24,
+                          isPhone ? 12 : 24,
+                          isPhone ? 12 : 24 + keyboardInset,
                         ),
                         children: [
                           ..._buildMessageTimeline(
@@ -353,11 +358,12 @@ class ChatHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     final hasSelection = selectedCount > 0;
     final allSelected = messageCount > 0 && selectedCount == messageCount;
     return Container(
-      height: 74,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+      height: isPhone ? 56 : 74,
+      padding: EdgeInsets.symmetric(horizontal: isPhone ? 6 : 24),
       decoration: BoxDecoration(
         color: appColors.surface,
         border: Border(bottom: BorderSide(color: appColors.line)),
@@ -370,7 +376,7 @@ class ChatHeader extends StatelessWidget {
               tooltip: '返回列表',
               onPressed: onMobileBack,
             ),
-            const SizedBox(width: 8),
+            SizedBox(width: isPhone ? 2 : 8),
           ],
           Expanded(
             child: Column(
@@ -386,7 +392,7 @@ class ChatHeader extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: appColors.text,
-                    fontSize: 18,
+                    fontSize: isPhone ? 17 : 18,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -426,7 +432,34 @@ class ChatHeader extends StatelessWidget {
               tooltip: '取消多选',
               onPressed: onExitSelectionMode,
             ),
-          ] else ...[
+          ] else if (isPhone)
+            PopupMenuButton<int>(
+              tooltip: '聊天操作',
+              icon: Icon(Icons.more_vert_rounded, color: appColors.muted),
+              onSelected: (value) {
+                if (value == 0) onShowDetails();
+                if (value == 1) onEnterSelectionMode();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 0,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.info_outline_rounded),
+                    title: Text('设备详情'),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 1,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.checklist_rounded),
+                    title: Text('选择消息'),
+                  ),
+                ),
+              ],
+            )
+          else ...[
             _HeaderButton(
               icon: Icons.info_outline_rounded,
               tooltip: '详细信息',
@@ -557,7 +590,10 @@ class MessageTimeDivider extends StatelessWidget {
           color: appColors.panel,
           borderRadius: BorderRadius.circular(999),
         ),
-        child: Text(label, style: TextStyle(color: appColors.muted, fontSize: 12)),
+        child: Text(
+          label,
+          style: TextStyle(color: appColors.muted, fontSize: 12),
+        ),
       ),
     );
   }
@@ -581,4 +617,3 @@ String _formatMessageClock(DateTime value) {
 }
 
 String _twoDigits(int value) => value.toString().padLeft(2, '0');
-

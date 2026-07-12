@@ -224,7 +224,10 @@ class FileCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 5),
-                Text(file.size, style: TextStyle(color: appColors.muted, fontSize: 12)),
+                Text(
+                  file.size,
+                  style: TextStyle(color: appColors.muted, fontSize: 12),
+                ),
                 const SizedBox(height: 8),
                 StableProgressBar(
                   value: file.progress / 100,
@@ -268,6 +271,7 @@ class Composer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyV, control: true):
@@ -280,98 +284,223 @@ class Composer extends StatelessWidget {
         ),
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
-              child: Row(
-                children: [
-                  _ComposerButton(
-                    icon: Icons.image_outlined,
-                    tooltip: '图片',
-                    onPressed: onSendImage,
-                  ),
-                  _ComposerButton(
-                    icon: Icons.attach_file_rounded,
-                    tooltip: '文件',
-                    onPressed: onSendFile,
-                  ),
-                  _ComposerButton(
-                    icon: Icons.content_paste_rounded,
-                    tooltip: '粘贴图片',
-                    onPressed: () => onPasteImages(),
-                  ),
-                ],
+            if (!isPhone)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+                child: Row(
+                  children: [
+                    _ComposerButton(
+                      icon: Icons.image_outlined,
+                      tooltip: '图片',
+                      onPressed: onSendImage,
+                    ),
+                    _ComposerButton(
+                      icon: Icons.attach_file_rounded,
+                      tooltip: '文件',
+                      onPressed: onSendFile,
+                    ),
+                    _ComposerButton(
+                      icon: Icons.content_paste_rounded,
+                      tooltip: '粘贴图片',
+                      onPressed: () => onPasteImages(),
+                    ),
+                  ],
+                ),
               ),
-            ),
             if (pendingAttachments.isNotEmpty)
               PendingAttachmentStrip(
                 attachments: pendingAttachments,
                 onRemove: onRemovePendingAttachment,
               ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: ShadTextarea(
-                      controller: controller,
-                      key: const ValueKey('composer-input'),
-                      minHeight: 78,
-                      maxHeight: 130,
-                      resizable: false,
-                      placeholder: const Text('输入消息...'),
-                      decoration: ShadDecoration(
-                        color: Colors.transparent,
-                        border: ShadBorder.all(
+            if (isPhone)
+              _MobileComposerRow(
+                controller: controller,
+                onSend: onSend,
+                onSendImage: onSendImage,
+                onSendFile: onSendFile,
+                onPasteImages: onPasteImages,
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: ShadTextarea(
+                        controller: controller,
+                        key: const ValueKey('composer-input'),
+                        minHeight: 78,
+                        maxHeight: 130,
+                        resizable: false,
+                        placeholder: const Text('输入消息...'),
+                        decoration: ShadDecoration(
                           color: Colors.transparent,
-                          width: 0,
+                          border: ShadBorder.all(
+                            color: Colors.transparent,
+                            width: 0,
+                          ),
+                          focusedBorder: ShadBorder.all(
+                            color: Colors.transparent,
+                            width: 0,
+                          ),
+                          secondaryBorder: ShadBorder.all(
+                            color: Colors.transparent,
+                            width: 0,
+                          ),
+                          secondaryFocusedBorder: ShadBorder.all(
+                            color: Colors.transparent,
+                            width: 0,
+                          ),
                         ),
-                        focusedBorder: ShadBorder.all(
-                          color: Colors.transparent,
-                          width: 0,
+                        style: TextStyle(
+                          color: appColors.text,
+                          fontSize: 14,
+                          height: 1.55,
                         ),
-                        secondaryBorder: ShadBorder.all(
-                          color: Colors.transparent,
-                          width: 0,
-                        ),
-                        secondaryFocusedBorder: ShadBorder.all(
-                          color: Colors.transparent,
-                          width: 0,
-                        ),
+                        onSubmitted: (_) => onSend(),
                       ),
-                      style: TextStyle(
-                        color: appColors.text,
-                        fontSize: 14,
-                        height: 1.55,
-                      ),
-                      onSubmitted: (_) => onSend(),
                     ),
-                  ),
-                  const SizedBox(width: 14),
-                  SizedBox(
-                    height: 38,
-                    child: ShadButton(
-                      onPressed: onSend,
+                    const SizedBox(width: 14),
+                    SizedBox(
                       height: 38,
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      backgroundColor: appColors.accent,
-                      hoverBackgroundColor: Color.alphaBlend(
-                        Colors.black.withValues(alpha: 0.08),
-                        appColors.accent,
-                      ),
-                      foregroundColor: Colors.white,
-                      hoverForegroundColor: Colors.white,
-                      child: const Text(
-                        '发送',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                      child: ShadButton(
+                        onPressed: onSend,
+                        height: 38,
+                        padding: const EdgeInsets.symmetric(horizontal: 18),
+                        backgroundColor: appColors.accent,
+                        hoverBackgroundColor: Color.alphaBlend(
+                          Colors.black.withValues(alpha: 0.08),
+                          appColors.accent,
+                        ),
+                        foregroundColor: Colors.white,
+                        hoverForegroundColor: Colors.white,
+                        child: const Text(
+                          '发送',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MobileComposerRow extends StatelessWidget {
+  const _MobileComposerRow({
+    required this.controller,
+    required this.onSend,
+    required this.onSendImage,
+    required this.onSendFile,
+    required this.onPasteImages,
+  });
+
+  final TextEditingController controller;
+  final VoidCallback onSend;
+  final VoidCallback onSendImage;
+  final VoidCallback onSendFile;
+  final Future<void> Function() onPasteImages;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          PopupMenuButton<int>(
+            tooltip: '添加附件',
+            icon: const Icon(Icons.add_circle_outline_rounded),
+            onSelected: (value) {
+              if (value == 0) onSendImage();
+              if (value == 1) onSendFile();
+              if (value == 2) onPasteImages();
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 0,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.image_outlined),
+                  title: Text('发送图片'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 1,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.attach_file_rounded),
+                  title: Text('发送文件'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 2,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.content_paste_rounded),
+                  title: Text('粘贴图片'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: appColors.panel,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: ShadTextarea(
+                controller: controller,
+                key: const ValueKey('composer-input'),
+                minHeight: 44,
+                maxHeight: 100,
+                resizable: false,
+                placeholder: const Text('输入消息'),
+                inputPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: ShadDecoration(
+                  color: Colors.transparent,
+                  border: ShadBorder.all(color: Colors.transparent, width: 0),
+                  focusedBorder: ShadBorder.all(
+                    color: appColors.accent,
+                    width: 1,
+                  ),
+                  secondaryBorder: ShadBorder.all(
+                    color: Colors.transparent,
+                    width: 0,
+                  ),
+                  secondaryFocusedBorder: ShadBorder.all(
+                    color: appColors.accent,
+                    width: 1,
+                  ),
+                ),
+                style: TextStyle(color: appColors.text, fontSize: 14),
+                onSubmitted: (_) => onSend(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Tooltip(
+            message: '发送',
+            child: IconButton.filled(
+              onPressed: onSend,
+              icon: const Icon(Icons.send_rounded, size: 20),
+              style: IconButton.styleFrom(
+                fixedSize: const Size(44, 44),
+                backgroundColor: appColors.accent,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

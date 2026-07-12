@@ -20,14 +20,16 @@ class TransfersPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
+    final rows = _groupedRows(tasks);
     return Container(
       color: appColors.chatBg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            height: 74,
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            height: isPhone ? 56 : 74,
+            padding: EdgeInsets.symmetric(horizontal: isPhone ? 16 : 28),
             decoration: BoxDecoration(
               color: appColors.surface,
               border: Border(bottom: BorderSide(color: appColors.line)),
@@ -59,11 +61,30 @@ class TransfersPage extends StatelessWidget {
                     ),
                   )
                 : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
-                    itemCount: tasks.length,
+                    padding: EdgeInsets.fromLTRB(
+                      isPhone ? 12 : 32,
+                      isPhone ? 16 : 28,
+                      isPhone ? 12 : 32,
+                      isPhone ? 20 : 32,
+                    ),
+                    itemCount: rows.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
-                      final task = tasks[index];
+                      final row = rows[index];
+                      if (row is String) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                          child: Text(
+                            row,
+                            style: TextStyle(
+                              color: appColors.muted,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        );
+                      }
+                      final task = row as TransferTask;
                       return TransferTaskCard(
                         task: task,
                         request: incomingRequests[task.id],
@@ -77,6 +98,28 @@ class TransfersPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  List<Object> _groupedRows(List<TransferTask> tasks) {
+    final rows = <Object>[];
+    void addGroup(String label, bool Function(TransferTask) matches) {
+      final group = tasks.where(matches).toList(growable: false);
+      if (group.isEmpty) return;
+      rows
+        ..add(label)
+        ..addAll(group);
+    }
+
+    addGroup('等待确认', (task) => task.status == TransferTaskStatus.waiting);
+    addGroup('进行中', (task) => task.status == TransferTaskStatus.transferring);
+    addGroup(
+      '已完成',
+      (task) =>
+          task.status == TransferTaskStatus.completed ||
+          task.status == TransferTaskStatus.failed ||
+          task.status == TransferTaskStatus.cancelled,
+    );
+    return rows;
   }
 }
 
@@ -122,7 +165,11 @@ class TransferTaskCard extends StatelessWidget {
                   color: appColors.accentSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(_iconForTask(task), color: appColors.accent, size: 22),
+                child: Icon(
+                  _iconForTask(task),
+                  color: appColors.accent,
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -294,4 +341,3 @@ String _statusLabel(TransferTaskStatus status) {
     TransferTaskStatus.cancelled => '已取消',
   };
 }
-

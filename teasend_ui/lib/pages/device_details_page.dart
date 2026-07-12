@@ -18,6 +18,7 @@ class DeviceDetailsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     final device = conversation.device;
     return Container(
       width: double.infinity,
@@ -25,7 +26,12 @@ class DeviceDetailsPage extends StatelessWidget {
       child: device == null
           ? const _DeviceDetailsEmpty()
           : ListView(
-              padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 16 : 32,
+                isPhone ? 20 : 28,
+                isPhone ? 16 : 32,
+                isPhone ? 24 : 32,
+              ),
               children: [
                 Row(
                   children: [
@@ -48,7 +54,10 @@ class DeviceDetailsPage extends StatelessWidget {
                           Text(
                             '${device.deviceType.label} · ${device.displayModel}',
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: appColors.muted, fontSize: 13),
+                            style: TextStyle(
+                              color: appColors.muted,
+                              fontSize: 13,
+                            ),
                           ),
                         ],
                       ),
@@ -156,7 +165,11 @@ class _DeviceAutoSendCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     '截屏并复制到剪贴板后，自动把图片发送到此设备',
-                    style: TextStyle(color: appColors.muted, fontSize: 12, height: 1.4),
+                    style: TextStyle(
+                      color: appColors.muted,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
                   ),
                 ],
               ),
@@ -226,7 +239,11 @@ class _DeviceSwitchCard extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     description,
-                    style: TextStyle(color: appColors.muted, fontSize: 12, height: 1.4),
+                    style: TextStyle(
+                      color: appColors.muted,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
                   ),
                 ],
               ),
@@ -351,4 +368,3 @@ class _DeviceDetailRow {
   final String label;
   final String value;
 }
-

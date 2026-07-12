@@ -180,7 +180,6 @@ class NearSendApp extends StatelessWidget {
             ring: appColors.accent,
             selection: appColors.accent.withValues(alpha: 0.20),
           ),
-          textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
         ),
         darkTheme: ShadThemeData(
@@ -190,7 +189,6 @@ class NearSendApp extends StatelessWidget {
             ring: appColors.accent,
             selection: appColors.accent.withValues(alpha: 0.28),
           ),
-          textTheme: ShadTextTheme(family: 'HarmonyOS Sans SC'),
           radius: const BorderRadius.all(Radius.circular(8)),
         ),
         themeMode: ThemeMode.light,
@@ -203,7 +201,6 @@ class NearSendApp extends StatelessWidget {
                 seedColor: appColors.accent,
                 brightness: Brightness.light,
               ),
-              fontFamily: 'HarmonyOS Sans SC',
               scaffoldBackgroundColor: const Color(0xFFEDE9DE),
               dialogTheme: DialogThemeData(
                 backgroundColor: Colors.transparent,
@@ -246,7 +243,6 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     with WindowListener, TrayListener {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
   final List<MessageAttachment> _pendingAttachments = [];
   final _clipboardFiles = WindowsClipboardFiles();
   final _firewallService = const WindowsFirewallService();
@@ -733,7 +729,8 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       if (!mounted) return;
       setState(() {
         final protocol = identity.https ? 'HTTPS' : 'HTTP';
-        _localHttpStatus = '127.0.0.1:$port -> $protocol ${response.statusCode}';
+        _localHttpStatus =
+            '127.0.0.1:$port -> $protocol ${response.statusCode}';
       });
     } catch (error) {
       if (!mounted) return;
@@ -1440,9 +1437,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _receiveHistory = _receiveHistory
           .where((item) => item.id != entry.id)
           .toList();
-      _staleHistoryIds = _staleHistoryIds
-          .where((id) => id != entry.id)
-          .toSet();
+      _staleHistoryIds = _staleHistoryIds.where((id) => id != entry.id).toSet();
     });
     unawaited(_historyStore.persist(_receiveHistory));
 
@@ -1500,7 +1495,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         .length;
     if (count == 0) return;
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showNearSendDialog<bool>(
       context: context,
       builder: (context) {
         return TeaDialog(
@@ -1550,7 +1545,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     required String message,
   }) {
     var alsoDeleteFile = false;
-    return showDialog<_HistoryRemoval>(
+    return showNearSendDialog<_HistoryRemoval>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
@@ -1565,7 +1560,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                 children: [
                   Text(
                     message,
-                    style: TextStyle(color: appColors.text, fontSize: 14, height: 1.5),
+                    style: TextStyle(
+                      color: appColors.text,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   InkWell(
@@ -1587,7 +1586,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                           const SizedBox(width: 2),
                           Text(
                             '同时删除磁盘上的文件',
-                            style: TextStyle(color: appColors.text, fontSize: 13),
+                            style: TextStyle(
+                              color: appColors.text,
+                              fontSize: 13,
+                            ),
                           ),
                         ],
                       ),
@@ -1785,7 +1787,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     // the instant showDialog returns. Disposing them here in a `finally` raced
     // the exit transition and crashed with "TextEditingController used after
     // being disposed" when the dialog was dismissed.
-    final result = await showDialog<_ManualConnectInput>(
+    final result = await showNearSendDialog<_ManualConnectInput>(
       context: context,
       builder: (context) => _ManualConnectDialog(
         initialIp: prefix,
@@ -1827,7 +1829,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
         ? endpoints.first
         : '本机端口 ${_discoveryService.boundPort}';
 
-    final newAlias = await showDialog<String>(
+    final newAlias = await showNearSendDialog<String>(
       context: context,
       builder: (context) => _DeviceInfoDialog(
         initialAlias: identity.alias,
@@ -1867,7 +1869,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       'localsendVersion': LocalSendIdentity.protocolVersion,
     });
 
-    await showDialog<void>(
+    await showNearSendDialog<void>(
       context: context,
       builder: (context) {
         return TeaDialog(
@@ -2308,7 +2310,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       return;
     }
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showNearSendDialog<bool>(
       context: context,
       builder: (context) {
         return TeaDialog(
@@ -2495,7 +2497,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     String hintText = '输入会话名称',
   }) async {
     final conversation = _visibleConversations[index];
-    final title = await showDialog<String>(
+    final title = await showNearSendDialog<String>(
       context: context,
       builder: (context) => _TextPromptDialog(
         title: dialogTitle,
@@ -2611,8 +2613,6 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
       _selectedMessageIds.clear();
     });
   }
-
-  void _openNavDrawer() => _scaffoldKey.currentState?.openDrawer();
 
   Future<void> _chooseAutoSaveDirectory() async {
     if (Platform.isAndroid) {
@@ -2925,9 +2925,9 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     // Wide (tablet/desktop): list + chat side by side. Narrow (phone): one at a
     // time, navigating list -> chat -> back.
     final wide = width >= 880;
-    // The left rail shows on tablets+desktop; true phones use a Drawer instead.
+    // The left rail stays on tablets+desktop; phones use bottom navigation.
     final hasRail = width >= 560;
-    final showDrawer = !hasRail;
+    final isPhone = !hasRail;
     final conversationWidth = wide
         ? 320.0
         : hasRail
@@ -2942,19 +2942,15 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
     final showChatPage = wide || _mobileChatOpen;
 
     return Scaffold(
-      key: _scaffoldKey,
       resizeToAvoidBottomInset: false,
       backgroundColor: appColors.panel,
-      drawer: showDrawer
-          ? _NavDrawer(
+      bottomNavigationBar: isPhone && !(_mobileChatOpen && showChatPage)
+          ? _MobileNavigationBar(
               activeSection: _activeSection,
-              deviceAlias: _discoveryService.identity.alias,
-              onShowDeviceInfo: _showDeviceInfoDialog,
               onChats: _showChatsSection,
               onTransfers: _showTransfersSection,
-              onTheme: _showThemeSection,
-              onSettings: _showSettingsSection,
               onHistory: _showHistorySection,
+              onSettings: _showSettingsSection,
             )
           : null,
       body: SafeArea(
@@ -2980,7 +2976,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     themeColor: _themeColor,
                     onThemeModeChanged: _setThemeMode,
                     onThemeColorChanged: _setThemeColor,
-                    onMenu: showDrawer ? _openNavDrawer : null,
+                    onMenu: null,
                   ),
                 )
               else if (_activeSection == _MainSection.history)
@@ -2993,7 +2989,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onDelete: _deleteHistoryEntry,
                     onClear: _clearReceiveHistory,
                     onCleanupStale: _cleanupStaleHistory,
-                    onMenu: showDrawer ? _openNavDrawer : null,
+                    onMenu: null,
                   ),
                 )
               else if (_activeSection == _MainSection.transfers)
@@ -3004,7 +3000,7 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onAccept: _acceptIncomingTransfer,
                     onDecline: _declineIncomingTransfer,
                     onCancel: _cancelTransfer,
-                    onMenu: showDrawer ? _openNavDrawer : null,
+                    onMenu: null,
                   ),
                 )
               else if (_activeSection == _MainSection.settings)
@@ -3029,9 +3025,11 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                     onShowImageCopyButtonChanged: _setShowImageCopyButton,
                     onMinimizeToTrayChanged: _setMinimizeToTrayEnabled,
                     onChooseDirectory: _chooseAutoSaveDirectory,
+                    onShowTheme: isPhone ? _showThemeSection : null,
+                    onShowDeviceInfo: isPhone ? _showDeviceInfoDialog : null,
                     onRefreshFirewall: _refreshReceiveDiagnostics,
                     onRepairFirewall: _repairFirewall,
-                    onMenu: showDrawer ? _openNavDrawer : null,
+                    onMenu: null,
                   ),
                 )
               else ...[
@@ -3052,8 +3050,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                       onRefresh: _refreshDevices,
                       onShowQrCode: _showConnectionQrDialog,
                       onManualConnect: _showManualConnectDialog,
+                      deviceAlias: _discoveryService.identity.alias,
+                      onShowDeviceInfo: _showDeviceInfoDialog,
                       onContextMenu: _showConversationMenu,
-                      onMenu: showDrawer ? _openNavDrawer : null,
+                      onMenu: null,
                       onEditRemark: (index) => _renameConversation(
                         index,
                         dialogTitle: '编辑备注',
@@ -3099,7 +3099,10 @@ class _ChatPrototypePageState extends State<ChatPrototypePage>
                         ? Center(
                             child: Text(
                               '暂无会话，等待局域网设备…',
-                              style: TextStyle(color: appColors.muted, fontSize: 14),
+                              style: TextStyle(
+                                color: appColors.muted,
+                                fontSize: 14,
+                              ),
                             ),
                           )
                         : PopScope(

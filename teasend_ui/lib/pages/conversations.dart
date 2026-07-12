@@ -12,6 +12,8 @@ class ConversationPanel extends StatelessWidget {
     required this.onRefresh,
     required this.onShowQrCode,
     required this.onManualConnect,
+    required this.deviceAlias,
+    required this.onShowDeviceInfo,
     required this.onContextMenu,
     required this.onSelect,
     this.onMenu,
@@ -31,6 +33,8 @@ class ConversationPanel extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final VoidCallback onShowQrCode;
   final VoidCallback onManualConnect;
+  final String deviceAlias;
+  final VoidCallback onShowDeviceInfo;
   final void Function(int index, Offset position) onContextMenu;
   final ValueChanged<int> onSelect;
 
@@ -45,97 +49,126 @@ class ConversationPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     return Container(
-      margin: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+      margin: isPhone
+          ? EdgeInsets.zero
+          : const EdgeInsets.fromLTRB(0, 12, 12, 12),
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: appColors.surface,
-        border: Border.all(color: appColors.line),
-        borderRadius: BorderRadius.circular(8),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A0F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
+        border: isPhone ? null : Border.all(color: appColors.line),
+        borderRadius: isPhone ? BorderRadius.zero : BorderRadius.circular(8),
+        boxShadow: isPhone
+            ? const []
+            : const [
+                BoxShadow(
+                  color: Color(0x0A0F172A),
+                  blurRadius: 18,
+                  offset: Offset(0, 8),
+                ),
+              ],
       ),
       child: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-            decoration: BoxDecoration(
-              border: Border(
-                right: BorderSide(color: appColors.line),
-                bottom: BorderSide(color: appColors.line),
+          if (isPhone)
+            _CompactMobileConversationHeader(
+              deviceAlias: deviceAlias,
+              isScanning: isScanning,
+              scanStatus: scanStatus,
+              onRefresh: onRefresh,
+              onShowQrCode: onShowQrCode,
+              onManualConnect: onManualConnect,
+              onShowDeviceInfo: onShowDeviceInfo,
+            )
+          else
+            Container(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: appColors.line),
+                  bottom: BorderSide(color: appColors.line),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      if (onMenu != null)
+                        _ToolButton(
+                          icon: Icons.menu_rounded,
+                          tooltip: '菜单',
+                          onPressed: onMenu,
+                        ),
+                      _ToolButton(
+                        icon: Icons.refresh_rounded,
+                        tooltip: '刷新',
+                        enabled: !isScanning,
+                        onPressed: onRefresh,
+                      ),
+                      _ToolButton(
+                        icon: Icons.qr_code_rounded,
+                        tooltip: '二维码',
+                        onPressed: onShowQrCode,
+                      ),
+                      _ToolButton(
+                        icon: Icons.add_link_rounded,
+                        tooltip: '手动连接',
+                        enabled: !isScanning,
+                        onPressed: onManualConnect,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: isScanning
+                            ? CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: appColors.accent,
+                              )
+                            : Icon(
+                                Icons.lan_rounded,
+                                size: 15,
+                                color: appColors.muted,
+                              ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          scanStatus,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: appColors.muted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    if (onMenu != null)
-                      _ToolButton(
-                        icon: Icons.menu_rounded,
-                        tooltip: '菜单',
-                        onPressed: onMenu,
-                      ),
-                    _ToolButton(
-                      icon: Icons.refresh_rounded,
-                      tooltip: '刷新',
-                      enabled: !isScanning,
-                      onPressed: onRefresh,
-                    ),
-                    _ToolButton(
-                      icon: Icons.qr_code_rounded,
-                      tooltip: '二维码',
-                      onPressed: onShowQrCode,
-                    ),
-                    _ToolButton(
-                      icon: Icons.add_link_rounded,
-                      tooltip: '手动连接',
-                      enabled: !isScanning,
-                      onPressed: onManualConnect,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: isScanning
-                          ? CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: appColors.accent,
-                            )
-                          : Icon(Icons.lan_rounded, size: 15, color: appColors.muted),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        scanStatus,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: appColors.muted, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
           Expanded(
             child: Builder(
               builder: (context) {
                 final list = ListView.builder(
-                  padding: const EdgeInsets.all(8),
+                  padding: isPhone ? EdgeInsets.zero : const EdgeInsets.all(8),
                   // Always scrollable so pull-to-refresh works even when the
                   // list is short or empty.
                   physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: conversations.length,
+                  itemCount: conversations.isEmpty ? 1 : conversations.length,
                   itemBuilder: (context, index) {
+                    if (conversations.isEmpty) {
+                      return _ConversationEmptyState(
+                        onRefresh: onRefresh,
+                        onManualConnect: onManualConnect,
+                      );
+                    }
                     final conversation = conversations[index];
                     final swipeEnabled =
                         Platform.isAndroid && onDeleteConversation != null;
@@ -159,6 +192,7 @@ class ConversationPanel extends StatelessWidget {
                             conversation.device!.fingerprint,
                           ),
                       selected: selected == index,
+                      mobile: isPhone,
                       padded: !swipeEnabled,
                       onTap: () => onSelect(index),
                       onContextMenu: (position) {
@@ -204,6 +238,317 @@ class ConversationPanel extends StatelessWidget {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Kept temporarily to make the desktop/mobile header migration easy to review.
+// ignore: unused_element
+class _MobileConversationHeader extends StatelessWidget {
+  const _MobileConversationHeader({
+    required this.deviceAlias,
+    required this.isScanning,
+    required this.scanStatus,
+    required this.onRefresh,
+    required this.onShowQrCode,
+    required this.onManualConnect,
+    required this.onShowDeviceInfo,
+  });
+
+  final String deviceAlias;
+  final bool isScanning;
+  final String scanStatus;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onShowQrCode;
+  final VoidCallback onManualConnect;
+  final VoidCallback onShowDeviceInfo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 10),
+      decoration: BoxDecoration(
+        color: appColors.surface,
+        border: Border(bottom: BorderSide(color: appColors.line)),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 48,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '消息',
+                    style: TextStyle(
+                      color: appColors.text,
+                      fontSize: 21,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '刷新设备',
+                  onPressed: isScanning ? null : onRefresh,
+                  icon: isScanning
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: appColors.accent,
+                          ),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                ),
+                PopupMenuButton<int>(
+                  tooltip: '连接方式',
+                  icon: const Icon(Icons.more_vert_rounded),
+                  onSelected: (value) {
+                    if (value == 0) onShowQrCode();
+                    if (value == 1) onManualConnect();
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(
+                      value: 0,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.qr_code_rounded),
+                        title: Text('连接二维码'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: 1,
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.add_link_rounded),
+                        title: Text('手动连接'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 2),
+                Tooltip(
+                  message: '本设备信息',
+                  child: InkWell(
+                    onTap: onShowDeviceInfo,
+                    customBorder: const CircleBorder(),
+                    child: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: appColors.accent,
+                      child: Text(
+                        deviceAlias.initials,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Row(
+            children: [
+              Icon(Icons.lan_rounded, size: 15, color: appColors.muted),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  scanStatus,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: appColors.muted, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CompactMobileConversationHeader extends StatelessWidget {
+  const _CompactMobileConversationHeader({
+    required this.deviceAlias,
+    required this.isScanning,
+    required this.scanStatus,
+    required this.onRefresh,
+    required this.onShowQrCode,
+    required this.onManualConnect,
+    required this.onShowDeviceInfo,
+  });
+
+  final String deviceAlias;
+  final bool isScanning;
+  final String scanStatus;
+  final Future<void> Function() onRefresh;
+  final VoidCallback onShowQrCode;
+  final VoidCallback onManualConnect;
+  final VoidCallback onShowDeviceInfo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('mobile-page-header'),
+      height: 56,
+      padding: const EdgeInsets.only(left: 16, right: 6),
+      decoration: BoxDecoration(
+        color: appColors.surface,
+        border: Border(bottom: BorderSide(color: appColors.line)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '消息',
+                  style: TextStyle(
+                    color: appColors.text,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  scanStatus,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: appColors.muted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: '刷新设备',
+            onPressed: isScanning ? null : onRefresh,
+            icon: isScanning
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: appColors.accent,
+                    ),
+                  )
+                : const Icon(Icons.refresh_rounded),
+          ),
+          PopupMenuButton<int>(
+            tooltip: '连接方式',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (value) {
+              if (value == 0) onShowQrCode();
+              if (value == 1) onManualConnect();
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 0,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.qr_code_rounded),
+                  title: Text('连接二维码'),
+                ),
+              ),
+              PopupMenuItem(
+                value: 1,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.add_link_rounded),
+                  title: Text('手动连接'),
+                ),
+              ),
+            ],
+          ),
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: Tooltip(
+              message: '本设备信息',
+              child: InkWell(
+                onTap: onShowDeviceInfo,
+                customBorder: const CircleBorder(),
+                child: Center(
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: appColors.accent,
+                    child: Text(
+                      deviceAlias.initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConversationEmptyState extends StatelessWidget {
+  const _ConversationEmptyState({
+    required this.onRefresh,
+    required this.onManualConnect,
+  });
+
+  final Future<void> Function() onRefresh;
+  final VoidCallback onManualConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 96, 24, 24),
+      child: Column(
+        children: [
+          Icon(
+            Icons.devices_rounded,
+            size: 48,
+            color: appColors.muted.withValues(alpha: 0.55),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '附近还没有设备',
+            style: TextStyle(
+              color: appColors.text,
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '确保两台设备连接到同一局域网',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: appColors.muted, fontSize: 13),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('重新扫描'),
+              ),
+              FilledButton.icon(
+                onPressed: onManualConnect,
+                icon: const Icon(Icons.add_link_rounded, size: 18),
+                label: const Text('手动连接'),
+              ),
+            ],
           ),
         ],
       ),
@@ -351,6 +696,7 @@ class ConversationTile extends StatelessWidget {
     required this.onTap,
     required this.onContextMenu,
     this.padded = true,
+    this.mobile = false,
   });
 
   final Conversation conversation;
@@ -363,34 +709,42 @@ class ConversationTile extends StatelessWidget {
   /// When false, omits the outer bottom spacing so a wrapper (e.g. the swipe
   /// action container) can own the list gap instead.
   final bool padded;
+  final bool mobile;
 
   @override
   Widget build(BuildContext context) {
     final tile = Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(mobile ? 0 : 8),
       child: GestureDetector(
         onSecondaryTapDown: (details) {
           onContextMenu(details.globalPosition);
         },
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(mobile ? 0 : 8),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOutCubic,
-            constraints: const BoxConstraints(minHeight: 72),
-            margin: EdgeInsets.only(left: selected ? 2 : 0),
-            padding: const EdgeInsets.all(10),
+            constraints: BoxConstraints(minHeight: mobile ? 76 : 72),
+            margin: EdgeInsets.only(left: !mobile && selected ? 2 : 0),
+            padding: EdgeInsets.symmetric(
+              horizontal: mobile ? 16 : 10,
+              vertical: mobile ? 12 : 10,
+            ),
             decoration: BoxDecoration(
-              color: selected ? appColors.accentSoft : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: selected
-                    ? appColors.accent.withValues(alpha: 0.24)
-                    : Colors.transparent,
-              ),
-              boxShadow: selected
+              color: !mobile && selected
+                  ? appColors.accentSoft
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(mobile ? 0 : 8),
+              border: mobile
+                  ? Border(bottom: BorderSide(color: appColors.line))
+                  : Border.all(
+                      color: selected
+                          ? appColors.accent.withValues(alpha: 0.24)
+                          : Colors.transparent,
+                    ),
+              boxShadow: !mobile && selected
                   ? const [
                       BoxShadow(
                         color: Color(0x0F0F172A),
@@ -433,7 +787,9 @@ class ConversationTile extends StatelessWidget {
                                   ? Icons.wifi_rounded
                                   : Icons
                                         .signal_wifi_connected_no_internet_4_rounded,
-                              color: online ? const Color(0xFF27A95D) : appColors.muted,
+                              color: online
+                                  ? const Color(0xFF27A95D)
+                                  : appColors.muted,
                               size: 16,
                             )
                           else
@@ -721,4 +1077,3 @@ class ConversationAvatar extends StatelessWidget {
     );
   }
 }
-

@@ -21,6 +21,8 @@ class SettingsPage extends StatelessWidget {
     required this.onShowImageCopyButtonChanged,
     required this.onMinimizeToTrayChanged,
     required this.onChooseDirectory,
+    this.onShowTheme,
+    this.onShowDeviceInfo,
     this.onRefreshFirewall,
     this.onRepairFirewall,
     this.tempCleanupService,
@@ -46,6 +48,8 @@ class SettingsPage extends StatelessWidget {
   final ValueChanged<bool> onShowImageCopyButtonChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final VoidCallback onChooseDirectory;
+  final VoidCallback? onShowTheme;
+  final VoidCallback? onShowDeviceInfo;
   final VoidCallback? onRefreshFirewall;
   final VoidCallback? onRepairFirewall;
   final TempFileCleanupService? tempCleanupService;
@@ -54,6 +58,7 @@ class SettingsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     final imageCopyButtonSetting = _SettingsSwitchCard(
       icon: Icons.image_rounded,
       title: '图片复制按钮',
@@ -68,8 +73,8 @@ class SettingsPage extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            height: 74,
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            height: isPhone ? 56 : 74,
+            padding: EdgeInsets.symmetric(horizontal: isPhone ? 16 : 28),
             decoration: BoxDecoration(
               color: appColors.surface,
               border: Border(bottom: BorderSide(color: appColors.line)),
@@ -94,26 +99,43 @@ class SettingsPage extends StatelessWidget {
           ),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(32, 28, 32, 32),
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 12 : 32,
+                isPhone ? 16 : 28,
+                isPhone ? 12 : 32,
+                isPhone ? 20 : 32,
+              ),
               children: [
+                if (onShowTheme != null) ...[
+                  _SettingsNavigationRow(
+                    icon: Icons.palette_outlined,
+                    title: '外观',
+                    description: '主题模式与强调色',
+                    onTap: onShowTheme!,
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 imageCopyButtonSetting,
                 const SizedBox(height: 14),
                 DecoratedBox(
                   decoration: BoxDecoration(
                     color: appColors.surface,
-                    border: Border.all(color: appColors.line),
+                    border: isPhone ? null : Border.all(color: appColors.line),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.all(18),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isPhone ? 16 : 18,
+                      vertical: isPhone ? 14 : 18,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
                             Container(
-                              width: 42,
-                              height: 42,
+                              width: isPhone ? 32 : 42,
+                              height: isPhone ? 32 : 42,
                               decoration: BoxDecoration(
                                 color: appColors.accentSoft,
                                 borderRadius: BorderRadius.circular(8),
@@ -121,7 +143,7 @@ class SettingsPage extends StatelessWidget {
                               child: Icon(
                                 Icons.save_alt_rounded,
                                 color: appColors.accent,
-                                size: 22,
+                                size: isPhone ? 19 : 22,
                               ),
                             ),
                             const SizedBox(width: 14),
@@ -322,10 +344,82 @@ class SettingsPage extends StatelessWidget {
                         : onMinimizeToTrayChanged,
                   ),
                 ],
+                if (onShowDeviceInfo != null) ...[
+                  const SizedBox(height: 14),
+                  _SettingsNavigationRow(
+                    icon: Icons.devices_rounded,
+                    title: '本设备信息',
+                    description: '设备名称、地址与连接二维码',
+                    onTap: onShowDeviceInfo!,
+                  ),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SettingsNavigationRow extends StatelessWidget {
+  const _SettingsNavigationRow({
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
+    return Material(
+      color: appColors.surface,
+      shape: RoundedRectangleBorder(
+        side: isPhone ? BorderSide.none : BorderSide(color: appColors.line),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: isPhone ? 16 : 18,
+            vertical: isPhone ? 14 : 18,
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: appColors.accent, size: 22),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: appColors.text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      description,
+                      style: TextStyle(color: appColors.muted, fontSize: 13),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: appColors.muted),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -348,24 +442,32 @@ class _SettingsSwitchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: appColors.surface,
-        border: Border.all(color: appColors.line),
+        border: isPhone ? null : Border.all(color: appColors.line),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(18),
+        padding: EdgeInsets.symmetric(
+          horizontal: isPhone ? 16 : 18,
+          vertical: isPhone ? 14 : 18,
+        ),
         child: Row(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: isPhone ? 32 : 42,
+              height: isPhone ? 32 : 42,
               decoration: BoxDecoration(
                 color: appColors.accentSoft,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Icon(icon, color: appColors.accent, size: 22),
+              child: Icon(
+                icon,
+                color: appColors.accent,
+                size: isPhone ? 19 : 22,
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -400,4 +502,3 @@ class _SettingsSwitchCard extends StatelessWidget {
     );
   }
 }
-

@@ -1,5 +1,27 @@
 part of '../main.dart';
 
+Future<T?> showNearSendDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+}) {
+  if (MediaQuery.sizeOf(context).width >= 560) {
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: barrierDismissible,
+      builder: builder,
+    );
+  }
+  return showModalBottomSheet<T>(
+    context: context,
+    isDismissible: barrierDismissible,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: Colors.transparent,
+    builder: builder,
+  );
+}
+
 class TeaDialog extends StatelessWidget {
   const TeaDialog({
     super.key,
@@ -18,6 +40,15 @@ class TeaDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
+    if (isPhone) {
+      return _MobileTeaDialog(
+        title: title,
+        content: content,
+        actions: actions,
+        icon: icon,
+      );
+    }
     return Material(
       color: Colors.transparent,
       child: ShadDialog(
@@ -60,6 +91,97 @@ class TeaDialog extends StatelessWidget {
         actionsMainAxisAlignment: MainAxisAlignment.end,
         expandActionsWhenTiny: false,
         child: content,
+      ),
+    );
+  }
+}
+
+class _MobileTeaDialog extends StatelessWidget {
+  const _MobileTeaDialog({
+    required this.title,
+    required this.content,
+    required this.actions,
+    this.icon,
+  });
+
+  final Widget title;
+  final Widget content;
+  final List<Widget> actions;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const ValueKey('mobile-tea-dialog'),
+      color: appColors.surface,
+      clipBehavior: Clip.antiAlias,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+      child: SafeArea(
+        top: false,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: appColors.line,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    if (icon != null) ...[
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: appColors.accentSoft,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(icon, color: appColors.accent, size: 19),
+                      ),
+                      const SizedBox(width: 12),
+                    ],
+                    Expanded(
+                      child: DefaultTextStyle.merge(
+                        style: TextStyle(
+                          color: appColors.text,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                        ),
+                        child: title,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                content,
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      for (var index = 0; index < actions.length; index++) ...[
+                        if (index > 0) const SizedBox(width: 10),
+                        Expanded(child: actions[index]),
+                      ],
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -120,7 +242,10 @@ class _DeviceInfoRow extends StatelessWidget {
         children: [
           SizedBox(
             width: 72,
-            child: Text(label, style: TextStyle(color: appColors.muted, fontSize: 13)),
+            child: Text(
+              label,
+              style: TextStyle(color: appColors.muted, fontSize: 13),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -173,34 +298,6 @@ InputDecoration teaInputDecoration({String? labelText, String? hintText}) {
 /// 输入框文本样式，确保暗黑模式下文本可见
 TextStyle teaInputTextStyle() {
   return TextStyle(color: appColors.text, fontSize: 14);
-}
-
-class _PopupMenuActionLabel extends StatelessWidget {
-  const _PopupMenuActionLabel({
-    required this.icon,
-    required this.label,
-    this.danger = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool danger;
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark
-        ? const Color(0xFFF8FAFC)
-        : const Color(0xFF0F172A);
-    final color = danger ? const Color(0xFFC85D4D) : textColor;
-    return Row(
-      children: [
-        Icon(icon, size: 17, color: color),
-        const SizedBox(width: 10),
-        Text(label, style: TextStyle(color: color, fontSize: 13)),
-      ],
-    );
-  }
 }
 
 class _MenuItemWithColor extends StatelessWidget {
@@ -513,4 +610,3 @@ class _NavIcon extends StatelessWidget {
     );
   }
 }
-

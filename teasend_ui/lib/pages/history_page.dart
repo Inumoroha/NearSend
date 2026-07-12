@@ -77,6 +77,7 @@ class _HistoryPageState extends State<HistoryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     final hasEntries = widget.entries.isNotEmpty;
     final filtered = _filtered;
     final rows = _buildRows(filtered);
@@ -90,8 +91,8 @@ class _HistoryPageState extends State<HistoryPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            height: 74,
-            padding: const EdgeInsets.symmetric(horizontal: 28),
+            height: isPhone ? 56 : 74,
+            padding: EdgeInsets.symmetric(horizontal: isPhone ? 16 : 28),
             decoration: BoxDecoration(
               color: appColors.surface,
               border: Border(bottom: BorderSide(color: appColors.line)),
@@ -116,29 +117,52 @@ class _HistoryPageState extends State<HistoryPage> {
                   style: TextStyle(color: appColors.muted, fontSize: 13),
                 ),
                 const Spacer(),
-                if (staleCount > 0)
+                if (isPhone && hasEntries)
+                  PopupMenuButton<int>(
+                    tooltip: '记录操作',
+                    icon: const Icon(Icons.more_vert_rounded),
+                    onSelected: (value) {
+                      if (value == 0) widget.onCleanupStale();
+                      if (value == 1) widget.onClear();
+                    },
+                    itemBuilder: (context) => [
+                      if (staleCount > 0)
+                        PopupMenuItem(
+                          value: 0,
+                          child: Text('清理失效记录 ($staleCount)'),
+                        ),
+                      const PopupMenuItem(value: 1, child: Text('清空全部记录')),
+                    ],
+                  ),
+                if (!isPhone && staleCount > 0)
                   TextButton.icon(
                     onPressed: widget.onCleanupStale,
-                    icon: const Icon(
-                      Icons.cleaning_services_rounded,
-                      size: 17,
-                    ),
+                    icon: const Icon(Icons.cleaning_services_rounded, size: 17),
                     label: Text('清理失效 ($staleCount)'),
-                    style: TextButton.styleFrom(foregroundColor: appColors.muted),
+                    style: TextButton.styleFrom(
+                      foregroundColor: appColors.muted,
+                    ),
                   ),
-                if (hasEntries)
+                if (!isPhone && hasEntries)
                   TextButton.icon(
                     onPressed: widget.onClear,
                     icon: const Icon(Icons.delete_sweep_rounded, size: 18),
                     label: const Text('清空'),
-                    style: TextButton.styleFrom(foregroundColor: appColors.muted),
+                    style: TextButton.styleFrom(
+                      foregroundColor: appColors.muted,
+                    ),
                   ),
               ],
             ),
           ),
           if (hasEntries)
             Padding(
-              padding: const EdgeInsets.fromLTRB(28, 14, 28, 0),
+              padding: EdgeInsets.fromLTRB(
+                isPhone ? 12 : 28,
+                isPhone ? 10 : 14,
+                isPhone ? 12 : 28,
+                0,
+              ),
               child: _HistorySearchField(
                 controller: _searchController,
                 onChanged: (value) => setState(() => _query = value),
@@ -154,7 +178,12 @@ class _HistoryPageState extends State<HistoryPage> {
                 : rows.isEmpty
                 ? _emptyState('未找到匹配的记录')
                 : ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(32, 16, 32, 32),
+                    padding: EdgeInsets.fromLTRB(
+                      isPhone ? 12 : 32,
+                      isPhone ? 12 : 16,
+                      isPhone ? 12 : 32,
+                      isPhone ? 20 : 32,
+                    ),
                     itemCount: rows.length,
                     itemBuilder: (context, index) {
                       final row = rows[index];
@@ -259,7 +288,11 @@ class _HistorySearchField extends StatelessWidget {
                 borderRadius: BorderRadius.circular(999),
                 child: Padding(
                   padding: const EdgeInsets.all(2),
-                  child: Icon(Icons.close_rounded, size: 16, color: appColors.muted),
+                  child: Icon(
+                    Icons.close_rounded,
+                    size: 16,
+                    color: appColors.muted,
+                  ),
                 ),
               );
             },
@@ -290,6 +323,7 @@ class _HistoryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isPhone = MediaQuery.sizeOf(context).width < 560;
     final kind = FileKind.fromExtension(p.extension(entry.fileName));
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -336,7 +370,10 @@ class _HistoryTile extends StatelessWidget {
                           '${_formatBytes(entry.size)} · ${entry.senderAlias} · ${_formatTime(entry.receivedAt)}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: appColors.muted, fontSize: 12),
+                          style: TextStyle(
+                            color: appColors.muted,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -347,22 +384,39 @@ class _HistoryTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            _HistoryAction(
-              icon: Icons.open_in_new_rounded,
-              tooltip: '打开文件',
-              onPressed: onOpenFile,
-            ),
-            _HistoryAction(
-              icon: Icons.folder_open_rounded,
-              tooltip: '打开所在文件夹',
-              onPressed: onOpenFolder,
-            ),
-            _HistoryAction(
-              icon: Icons.delete_outline_rounded,
-              tooltip: '删除记录',
-              color: const Color(0xFFC85D4D),
-              onPressed: onDelete,
-            ),
+            if (isPhone)
+              PopupMenuButton<int>(
+                tooltip: '文件操作',
+                icon: const Icon(Icons.more_vert_rounded),
+                onSelected: (value) {
+                  if (value == 0) onOpenFile();
+                  if (value == 1) onOpenFolder();
+                  if (value == 2) onDelete();
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 0, child: Text('打开文件')),
+                  PopupMenuItem(value: 1, child: Text('打开所在文件夹')),
+                  PopupMenuItem(value: 2, child: Text('删除记录')),
+                ],
+              )
+            else ...[
+              _HistoryAction(
+                icon: Icons.open_in_new_rounded,
+                tooltip: '打开文件',
+                onPressed: onOpenFile,
+              ),
+              _HistoryAction(
+                icon: Icons.folder_open_rounded,
+                tooltip: '打开所在文件夹',
+                onPressed: onOpenFolder,
+              ),
+              _HistoryAction(
+                icon: Icons.delete_outline_rounded,
+                tooltip: '删除记录',
+                color: const Color(0xFFC85D4D),
+                onPressed: onDelete,
+              ),
+            ],
           ],
         ),
       ),
@@ -457,4 +511,3 @@ class _HistoryAction extends StatelessWidget {
     );
   }
 }
-
