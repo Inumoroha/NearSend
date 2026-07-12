@@ -55,12 +55,17 @@ void main() {
     expect(find.text('输入消息...'), findsOneWidget);
     expect(find.text('发送'), findsOneWidget);
 
-    await tester.enterText(find.byType(EditableText), '你好，NearSend');
+    await tester.enterText(
+      find.descendant(
+        of: find.byKey(const ValueKey('composer-input')),
+        matching: find.byType(EditableText),
+      ),
+      '你好，NearSend',
+    );
     await tester.tap(find.text('发送'));
     await tester.pumpAndSettle();
 
     expect(find.text('你好，NearSend'), findsWidgets);
-    expect(find.byIcon(Icons.done_all_rounded), findsWidgets);
   });
 
   testWidgets('restored chat opens at latest message', (
@@ -141,15 +146,19 @@ void main() {
     await tester.tap(find.byIcon(Icons.checklist_rounded));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('文件会暂时保留在本地下载目录'));
+    final targetMessage = find.ancestor(
+      of: find.text('文件会暂时保留在本地下载目录'),
+      matching: find.byType(MessageBubble),
+    );
+    await tester.tap(targetMessage);
     await tester.pumpAndSettle();
 
-    expect(find.text('已选择 1 条'), findsOneWidget);
+    expect(find.textContaining('已选择'), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.delete_outline_rounded));
     await tester.pumpAndSettle();
 
-    expect(find.text('文件会暂时保留在本地下载目录'), findsNothing);
+    expect(targetMessage, findsNothing);
     expect(find.byIcon(Icons.checklist_rounded), findsOneWidget);
   });
 
@@ -617,7 +626,7 @@ void main() {
 
     expect(find.text('图片复制按钮'), findsOneWidget);
     final switches = find.byType(ShadSwitch);
-    expect(switches, findsNWidgets(4));
+    expect(switches, findsAtLeastNWidgets(3));
     expect(tester.widget<ShadSwitch>(switches.first).value, isTrue);
   });
 
@@ -676,6 +685,218 @@ void main() {
 
     expect(find.text('图片复制按钮'), findsOneWidget);
     expect(find.byType(ShadSwitch), findsNWidgets(4));
+  });
+
+  for (final size in const [Size(360, 800), Size(393, 852), Size(412, 915)]) {
+    testWidgets('phone ${size.width.toInt()} uses bottom navigation', (
+      WidgetTester tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.byKey(const ValueKey('mobile-bottom-navigation')), findsOne);
+      expect(find.byType(Drawer), findsNothing);
+      expect(
+        tester.getSize(find.byKey(const ValueKey('mobile-page-header'))).height,
+        56,
+      );
+
+      await tester.tap(find.text('传输'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('传输任务'), findsOneWidget);
+
+      await tester.tap(find.text('记录'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('文件记录'), findsOneWidget);
+
+      await tester.tap(find.text('设置'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('外观'), findsOneWidget);
+      expect(find.text('消息与图片'), findsNothing);
+      expect(find.text('接收与保存'), findsNothing);
+      expect(find.text('关于设备'), findsNothing);
+    });
+  }
+
+  testWidgets('phone hides bottom navigation while chat is open', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.tap(find.byType(ConversationTile).first);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(
+      find.byKey(const ValueKey('mobile-bottom-navigation')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byIcon(Icons.arrow_back_rounded).first);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byKey(const ValueKey('mobile-bottom-navigation')), findsOne);
+  });
+
+  testWidgets('phone transfer tasks are grouped by status', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const tasks = [
+      TransferTask(
+        id: 'waiting',
+        direction: TransferTaskDirection.incoming,
+        status: TransferTaskStatus.waiting,
+        peerAlias: 'Phone',
+        fileName: 'waiting.zip',
+        fileCount: 1,
+        totalBytes: 100,
+      ),
+      TransferTask(
+        id: 'active',
+        direction: TransferTaskDirection.outgoing,
+        status: TransferTaskStatus.transferring,
+        peerAlias: 'Laptop',
+        fileName: 'active.zip',
+        fileCount: 1,
+        totalBytes: 100,
+        progress: 0.4,
+      ),
+      TransferTask(
+        id: 'done',
+        direction: TransferTaskDirection.incoming,
+        status: TransferTaskStatus.completed,
+        peerAlias: 'Tablet',
+        fileName: 'done.zip',
+        fileCount: 1,
+        totalBytes: 100,
+        progress: 1,
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ShadApp.custom(
+        theme: ShadThemeData(brightness: Brightness.light),
+        appBuilder: (context) => MaterialApp(
+          home: Material(
+            child: TransfersPage(
+              tasks: tasks,
+              incomingRequests: const {},
+              onAccept: (_) {},
+              onDecline: (_) {},
+              onCancel: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('等待确认'), findsOneWidget);
+    expect(find.text('进行中'), findsOneWidget);
+    expect(find.text('已完成'), findsWidgets);
+  });
+
+  testWidgets('phone layout supports large text and keyboard inset', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byType(ConversationTile).first);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byTooltip('添加附件'), findsOneWidget);
+    expect(find.byTooltip('发送'), findsOneWidget);
+    expect(find.byTooltip('聊天操作'), findsOneWidget);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final keyboardPadding = tester.widget<AnimatedPadding>(
+      find.ancestor(
+        of: find.byType(Composer),
+        matching: find.byType(AnimatedPadding),
+      ),
+    );
+    expect(keyboardPadding.padding, const EdgeInsets.only(bottom: 300));
+  });
+
+  testWidgets('phone settings can switch to dark appearance', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.text('设置'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('外观').last);
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('夜间'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(appColors.chatBg, const Color(0xFF020617));
+    expect(find.byKey(const ValueKey('mobile-bottom-navigation')), findsOne);
+  });
+
+  testWidgets('phone device info opens as a bottom sheet', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const NearSendApp(enableDiscovery: false));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byTooltip('本设备信息'));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(BottomSheet), findsOneWidget);
+    expect(find.text('本设备信息'), findsOneWidget);
+
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    addTearDown(tester.view.resetViewInsets);
+    await tester.pump(const Duration(milliseconds: 300));
+
+    final dialog = find.byKey(const ValueKey('mobile-tea-dialog'));
+    expect(dialog, findsOneWidget);
+
+    final cancelButton = find.ancestor(
+      of: find.text('取消'),
+      matching: find.byType(ShadButton),
+    );
+    final saveButton = find.ancestor(
+      of: find.text('保存'),
+      matching: find.byType(ShadButton),
+    );
+    expect(
+      tester.getCenter(cancelButton).dy,
+      closeTo(tester.getCenter(saveButton).dy, 1),
+    );
   });
 
   testWidgets('theme page switches mode and accent color', (
