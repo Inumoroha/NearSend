@@ -13,9 +13,6 @@ permissions:
 jobs:
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: teasend_ui
 
     steps:
       - name: Checkout
@@ -43,5 +40,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: teasend_ui/NearSend-${{ github.ref_name }}-windows.zip
+          files: NearSend-${{ github.ref_name }}-windows.zip
           generate_release_notes: true

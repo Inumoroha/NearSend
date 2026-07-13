@@ -1,91 +1,154 @@
-# LocalSend 原版功能差距记录
+# NearSend 与 LocalSend 功能差距记录
 
-当前 NearSend 已经实现了：
+本文以当前 Flutter 项目代码为准，记录 NearSend 已实现的功能，以及仍可以继续补齐的能力。此前文档中的部分差距已经完成，不能再作为待办事项。
 
-- Windows 桌面 UI
-- 局域网发现
-- 手动连接
-- 二维码连接
-- LocalSend 兼容的基础发文件/收文件
-- 多文件选择和缩略图预览
-- 截图/图片粘贴
-- 图片放大预览
-- 自动保存
-- 覆盖同名文件
-- 最小化到托盘
-- 主题模式和主题色
+## 当前已经实现
 
-但原版 LocalSend 仍然完整很多，主要还有以下功能当前没有实现或只实现了一部分。
+### 基础连接和协议
 
-## 协议和安全
+- Windows 桌面 UI 和 Android 初步支持。
+- 局域网设备发现，包括多网卡、Multicast 和 fallback 端口。
+- 手动输入 IP/端口连接。
+- 展示二维码连接信息。
+- LocalSend v1/v2 基础信息、注册、发送请求、上传和取消接口。
+- NearSend 文字消息和文件附件传输。
+- HTTPS/TLS，运行时生成并持久化自签名证书。
+- HTTPS 证书指纹校验。
+- 连接超时和基础错误处理。
 
-- HTTPS/TLS 加密传输，运行时证书生成。
-- 接收 PIN 校验。
-- 更完整的 LocalSend v1/v2 协议状态处理。
-- 收文件前的确认/拒绝流程，而不是直接接收或自动保存。
-- 忙碌、取消、失败、重试、超时等协议级状态。
+### 文件传输
 
-## 传输流程
+- 单设备发送。
+- 多文件选择。
+- 已选文件预览、移除和发送前编辑列表。
+- 图片、截图和剪贴板粘贴发送。
+- 图片预览和复制。
+- 独立传输任务页。
+- 单文件进度、总进度、速度和预计剩余时间。
+- 等待确认、传输中、完成、失败、取消状态。
+- 发送任务取消。
+- 发送失败后重试。
+- 收文件前接受/拒绝。
+- 自动保存和自定义保存目录。
+- 同名文件覆盖或自动重命名。
+- Android 保存到 Downloads/NearSend 或用户选择的目录。
 
-- 独立的传输进度页：速度、剩余时间、单文件/总进度、取消传输。
-- 发送模式：单设备发送、多设备发送、通过链接分享。
-- Web Share：浏览器打开链接上传/下载文件。
-- 接收选项页：接收时临时选择保存位置、文件处理方式。
-- 更完整的传输队列和会话管理。
+### 设备和接收管理
 
-## 设备和网络
-
+- 设备会话和聊天记录。
 - 收藏设备。
-- 收藏设备自动扫描。
+- 收藏设备自动接收文件，不再弹出确认。
+- 收藏设备剪贴板图片自动发送。
+- 接收历史持久化。
+- 历史搜索、按时间分组、打开文件、打开所在文件夹。
+- 删除单条记录、清空记录、清理文件已经不存在的失效记录。
+- Windows 防火墙检测和一键修复。
+- 本机 endpoint、HTTP 自检和基础 Discovery 请求诊断。
+- Android MulticastLock 和后台接收服务。
+
+### Windows 和界面
+
+- 最小化到系统托盘。
+- 托盘菜单恢复窗口和退出程序。
+- 主题模式和主题色。
+- 自动保存、同名文件处理等设置持久化。
+- 响应式桌面/移动端布局。
+
+## 仍然缺失或只有部分实现
+
+### 协议和安全
+
+- 接收 PIN 校验。
+- 用户可操作的设备信任管理，包括首次信任、已信任设备列表和撤销信任。
+- 更完整的 LocalSend v1/v2 状态兼容。
+- 忙碌、请求过期、对方主动取消、远端拒绝等协议级状态。
+- 更细的错误原因传递，而不是只显示通用失败。
+- 传输断线后的自动重试、退避和可恢复传输。
+- TLS/HTTP、安全策略等高级选项的配置界面。
+
+### 接收流程和任务管理
+
+- 接收时临时选择保存位置，而不是只能使用全局自动保存设置。
+- 接收时选择自动保存、临时保存或拒绝。
+- 接收时选择覆盖、跳过或重命名等文件冲突策略。
+- 接收前磁盘空间检查。
+- 持久化发送历史。
+- 应用重启后的传输任务恢复。
+- 已完成、失败、取消任务的统一历史管理。
+- 传输队列、并发数控制、任务排序和批量操作。
+
+### 发送方式
+
+- 一次选择多个目标设备发送。
+- 多设备发送时显示每台设备的独立进度和结果。
+- 部分成功、部分失败的结果处理。
+- Web Share：通过浏览器上传或下载文件。
+- Web 分享链接有效期、访问密码和大小限制。
+
+### 设备和网络高级设置
+
+- 收藏设备专用列表和独立在线状态管理。
 - 网络接口白名单/黑名单。
-- 自定义端口、HTTPS 开关、Multicast 设置、超时时间等高级网络配置。
-- 故障排查页面，比如防火墙、发现不到设备、连接失败提示。
+- 自定义监听端口。
+- HTTP/HTTPS 开关。
+- 自定义 Multicast 地址和发现参数。
+- 自定义发现间隔、连接超时和传输超时时间。
+- 更完整的网络故障排查向导。
+- HTTP、Discovery、TLS 分开的调试日志和日志导出。
 
-## 历史和文件管理
-
-- 接收历史页。
-- 历史记录清空、删除单条、打开所在文件夹。
-- 快速保存和仅收藏设备快速保存。
-- 更完整的文件选择页、已选文件编辑页。
-
-## 系统集成
+### Windows 系统集成
 
 - 开机自启。
-- 启动后最小化。
+- 启动后自动隐藏到托盘。
 - 记住窗口位置和大小。
-- Windows 右键菜单“用 LocalSend 发送”。
-- Portable 模式，也就是 exe 旁边放 `settings.json`。
-- 命令行 `--hidden` 隐藏启动。
+- 资源管理器右键菜单“使用 NearSend 发送”。
+- Portable 模式，即 exe 旁边使用 `settings.json` 保存配置。
+- `--hidden` 等命令行参数的实际行为。
+- 通过命令行指定目标设备或发送文件。
 
-## 跨平台能力
+### Android 和跨平台能力
 
-- Android/iOS/macOS/Linux 支持。
-- Android APK 选择器。
-- 移动端保存到相册。
-- 系统分享入口，比如手机从相册/文件管理器直接分享到 LocalSend。
+当前 Android 已有基础接收、保存目录、Multicast 和后台服务支持，但仍缺少：
 
-## 产品级页面
+- 从系统相册直接分享到 NearSend。
+- 从文件管理器直接分享到 NearSend。
+- 接收图片直接保存到系统相册。
+- 更完整的 Android 系统分享入口和文件选择器。
+- iOS 支持。
+- macOS 支持。
+- Linux 支持。
 
-- 多语言切换。
-- 关于页、更新日志、捐赠页、贡献者页。
-- Debug 页面、HTTP 日志、Discovery 调试、安全调试。
+### 产品级页面
 
-## 原项目参考文件
-
-- `localsend/app/lib/pages/tabs/settings_tab.dart`
-- `localsend/app/lib/pages/tabs/send_tab.dart`
-- `localsend/app/lib/pages/receive_page.dart`
-- `localsend/app/lib/pages/progress_page.dart`
-- `localsend/app/lib/pages/web_send_page.dart`
-- `localsend/app/lib/pages/receive_history_page.dart`
-- `localsend/app/lib/pages/settings/network_interfaces_page.dart`
+- 多语言切换，至少中文和英文。
+- 关于页。
+- 更新日志。
+- 检查更新。
+- 捐赠页和贡献者页。
+- 完整 Debug 页面。
+- 安全、Discovery、HTTP 请求和传输会话的可视化调试信息。
 
 ## 建议下一步优先级
 
-建议下一步先补这三件：
+1. PIN 和设备信任管理。
+2. 接收时的保存位置和文件冲突策略。
+3. 忙碌、远端取消、超时、自动重试等协议状态。
+4. 持久化发送历史和传输队列。
+5. 多设备发送。
+6. Windows 右键菜单、开机自启和窗口状态恢复。
+7. Web Share 和 Android 系统分享。
+8. 多语言、关于页和完整调试页。
+9. iOS、macOS、Linux 支持。
 
-1. 传输进度和取消。
-2. 接收前确认/拒绝。
-3. 接收历史。
+## 代码核对位置
 
-这三项最能把当前应用从“聊天式文件传输原型”推进到“真正可用的文件传输工具”。
+- `lib/main.dart`
+- `lib/pages/transfers_page.dart`
+- `lib/pages/history_page.dart`
+- `lib/pages/settings_page.dart`
+- `lib/pages/device_details_page.dart`
+- `lib/services/localsend_security.dart`
+- `lib/services/localsend_file_transfer.dart`
+- `lib/services/localsend_discovery_server.dart`
+- `lib/services/receive_history_store.dart`
+- `lib/services/windows_firewall_service.dart`

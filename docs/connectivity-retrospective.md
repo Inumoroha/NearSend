@@ -16,7 +16,7 @@
 Windows 防火墙的入站规则同时受端口和程序路径影响。程序规则绑定的是 exe 的绝对路径：
 
 ```text
-C:\Users\HP\Desktop\teasend\teasend_ui\build\windows\x64\runner\Release\nearsend.exe
+C:\Users\HP\Desktop\teasend\build\windows\x64\runner\Release\nearsend.exe
 D:\NearSend\nearsend.exe
 ```
 

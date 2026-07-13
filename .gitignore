@@ -4,21 +4,62 @@ localsend/
 # Local installers and downloaded assets.
 rustup-init.exe
 9e470bd0-f426-494c-a636-7bc9abca42ec.png
-teasend_ui/flutter_*.png
+flutter_*.png
 
 # Flutter/Dart build and tool output.
 **/.dart_tool/
 **/build/
+coverage/
 **/.flutter-plugins
 **/.flutter-plugins-dependencies
 **/devtools_options.yaml
-
-# IDE/user-local files.
-**/.idea/
-**/*.iml
+**/doc/api/
+**/ios/Flutter/.last_build_id
+**/flutter/ephemeral/
 **/.tool_home/
 **/.tool_home_local/
+.pub-cache/
+.pub/
 
-# OS files.
+# Android generated and local files.
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/.gradle/
+android/captures/
+android/local.properties
+android/key.properties
+**/*.keystore
+**/*.jks
+gradle-wrapper.jar
+
+# Windows and IDE files.
+**/x64/
+**/x86/
+**/.idea/
+**/.vscode/
+**/*.iml
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.[Cc]ache
+*.class
+app.*.symbols
+app.*.map.json
+
+# General temporary files.
+*.log
+*.pyc
+*.swp
+*.ipr
+*.iws
 Thumbs.db
 .DS_Store
+.atom/
+.build/
+.buildlog/
+.history/
+.svn/
+.swiftpm/
+migrate_working_dir/
