@@ -1,9 +1,12 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
+
+import 'clipboard_image_converter.dart';
 
 class WindowsClipboardFiles {
   /// A monotonically increasing counter Windows bumps on every clipboard
@@ -24,7 +27,7 @@ class WindowsClipboardFiles {
   }
 
   /// Reads only the clipboard bitmap (ignores copied image files), writing it
-  /// to a temp `.bmp`. Returns null when no bitmap is present.
+  /// to a temp `.jpg`. Returns null when no bitmap is present or decodable.
   Future<String?> readBitmapImagePath() async {
     if (!Platform.isWindows) return null;
     return _readBitmapPath();
@@ -118,6 +121,23 @@ class WindowsClipboardFiles {
   }
 
   Future<String?> _readBitmapPath() async {
+    final dibBytes = _readBitmapBytes();
+    if (dibBytes == null) return null;
+
+    final jpegBytes = await Isolate.run(() => clipboardDibToJpeg(dibBytes));
+    if (jpegBytes == null) return null;
+    final directory = await Directory.systemTemp.createTemp(
+      'nearsend_clipboard_',
+    );
+    final file = File(
+      '${directory.path}${Platform.pathSeparator}'
+      'clipboard-${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
+    await file.writeAsBytes(jpegBytes, flush: true);
+    return file.path;
+  }
+
+  Uint8List? _readBitmapBytes() {
     if (OpenClipboard(NULL) == FALSE) return null;
 
     try {
@@ -138,51 +158,13 @@ class WindowsClipboardFiles {
         final size = GlobalSize(Pointer.fromAddress(handle));
         if (size <= 0) return null;
 
-        final dibBytes = pointer.cast<Uint8>().asTypedList(size);
-        final bmpBytes = _bmpBytesFromDib(Uint8List.fromList(dibBytes));
-        final directory = await Directory.systemTemp.createTemp(
-          'nearsend_clipboard_',
-        );
-        final file = File(
-          '${directory.path}${Platform.pathSeparator}'
-          'clipboard-${DateTime.now().millisecondsSinceEpoch}.bmp',
-        );
-        await file.writeAsBytes(bmpBytes, flush: true);
-        return file.path;
+        return Uint8List.fromList(pointer.cast<Uint8>().asTypedList(size));
       } finally {
         GlobalUnlock(Pointer.fromAddress(handle));
       }
     } finally {
       CloseClipboard();
     }
-  }
-
-  Uint8List _bmpBytesFromDib(Uint8List dibBytes) {
-    final pixelOffset = _bitmapFileHeaderSize + _dibPixelOffset(dibBytes);
-    final fileSize = _bitmapFileHeaderSize + dibBytes.length;
-    final bytes = Uint8List(fileSize);
-    final data = ByteData.sublistView(bytes);
-
-    bytes[0] = 0x42; // B
-    bytes[1] = 0x4D; // M
-    data.setUint32(2, fileSize, Endian.little);
-    data.setUint32(10, pixelOffset, Endian.little);
-    bytes.setRange(_bitmapFileHeaderSize, fileSize, dibBytes);
-    return bytes;
-  }
-
-  int _dibPixelOffset(Uint8List dibBytes) {
-    if (dibBytes.length < 40) return 40;
-    final data = ByteData.sublistView(dibBytes);
-    final headerSize = data.getUint32(0, Endian.little);
-    final bitCount = data.getUint16(14, Endian.little);
-    final colorsUsed = data.getUint32(32, Endian.little);
-    final paletteEntries = colorsUsed != 0
-        ? colorsUsed
-        : bitCount <= 8
-        ? 1 << bitCount
-        : 0;
-    return headerSize + paletteEntries * 4;
   }
 
   bool _isImagePath(String path) {
@@ -194,6 +176,4 @@ class WindowsClipboardFiles {
         lower.endsWith('.webp') ||
         lower.endsWith('.bmp');
   }
-
-  static const _bitmapFileHeaderSize = 14;
 }
