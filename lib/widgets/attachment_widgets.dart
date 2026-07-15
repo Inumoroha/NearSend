@@ -413,74 +413,70 @@ class _MobileComposerRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          PopupMenuButton<int>(
-            tooltip: '添加附件',
-            icon: const Icon(Icons.add_circle_outline_rounded),
-            onSelected: (value) {
-              if (value == 0) onSendImage();
-              if (value == 1) onSendFile();
-              if (value == 2) onPasteImages();
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 0,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.image_outlined),
-                  title: Text('发送图片'),
+          SizedBox(
+            width: 40,
+            height: 40,
+            child: PopupMenuButton<int>(
+              tooltip: '添加附件',
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.add_circle_outline_rounded, size: 22),
+              onSelected: (value) {
+                if (value == 0) onSendImage();
+                if (value == 1) onSendFile();
+                if (value == 2) onPasteImages();
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(
+                  value: 0,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.image_outlined),
+                    title: Text('发送图片'),
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 1,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.attach_file_rounded),
-                  title: Text('发送文件'),
+                PopupMenuItem(
+                  value: 1,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.attach_file_rounded),
+                    title: Text('发送文件'),
+                  ),
                 ),
-              ),
-              PopupMenuItem(
-                value: 2,
-                child: ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.content_paste_rounded),
-                  title: Text('粘贴图片'),
+                PopupMenuItem(
+                  value: 2,
+                  child: ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.content_paste_rounded),
+                    title: Text('粘贴图片'),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(width: 4),
           Expanded(
             child: DecoratedBox(
+              key: const ValueKey('mobile-composer-input-shell'),
               decoration: BoxDecoration(
                 color: appColors.panel,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: ShadTextarea(
+              child: TextField(
                 controller: controller,
                 key: const ValueKey('composer-input'),
-                minHeight: 44,
-                maxHeight: 100,
-                resizable: false,
-                placeholder: const Text('输入消息'),
-                inputPadding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: ShadDecoration(
-                  color: Colors.transparent,
-                  border: ShadBorder.all(color: Colors.transparent, width: 0),
-                  focusedBorder: ShadBorder.all(
-                    color: appColors.accent,
-                    width: 1,
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.newline,
+                decoration: InputDecoration(
+                  hintText: '输入消息',
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
                   ),
-                  secondaryBorder: ShadBorder.all(
-                    color: Colors.transparent,
-                    width: 0,
-                  ),
-                  secondaryFocusedBorder: ShadBorder.all(
-                    color: appColors.accent,
-                    width: 1,
-                  ),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
                 ),
                 style: TextStyle(color: appColors.text, fontSize: 14),
                 onSubmitted: (_) => onSend(),
@@ -494,7 +490,7 @@ class _MobileComposerRow extends StatelessWidget {
               onPressed: onSend,
               icon: const Icon(Icons.send_rounded, size: 20),
               style: IconButton.styleFrom(
-                fixedSize: const Size(44, 44),
+                fixedSize: const Size(40, 40),
                 backgroundColor: appColors.accent,
                 foregroundColor: Colors.white,
               ),
